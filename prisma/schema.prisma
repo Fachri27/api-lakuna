@@ -1,0 +1,522 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+  CONTRIBUTOR
+}
+
+enum PhotoStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AssetType {
+  FOTO
+  VIDEO
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  PENDING
+}
+
+enum LicenseType {
+  STANDAR
+  SUBSCRIBE
+}
+
+enum EarningSource {
+  STANDAR
+  SUBSCRIPTION
+}
+
+enum PayoutStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
+enum DiscountValueType {
+  PERCENT
+  NOMINAL
+}
+
+enum VoucherScope {
+  ORDER
+  SUBSCRIPTION
+  BOTH
+}
+
+enum EventTargetType {
+  PHOTO
+  PLAN
+}
+
+// ─── USER ───────────────────────────────
+
+model User {
+  id         String   @id @default(uuid())
+  username   String   @unique
+  email      String   @unique
+  password   String
+  realName   String?
+  role       Role     @default(USER)
+  newsletter Boolean  @default(true)
+  avatarKey  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  subscription  Subscription?
+  cartItems     CartItem[]
+  favorites     Favorite[]
+  orders        Order[]
+  downloads     Download[]
+  refreshTokens RefreshToken[]
+  licenses      License[]
+  earnings      Earning[]
+  payouts       Payout[]
+  contributorBalance ContributorBalance?
+  voucherRedemptions VoucherRedemption[]
+
+  deletedAt DateTime?
+  photos    Photo[]
+
+  @@index([email])
+}
+
+// ─── PHOTO ──────────────────────────────
+
+model Photo {
+  id           String    @id @default(uuid())
+  title        String
+  description  String?
+  photographer String?
+  price        Int
+  type         AssetType @default(FOTO)
+  width        Int?
+  height       Int?
+  format       String?
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  originalKey  String // private — download only
+  thumbKey     String // public — grid
+  watermarkKey String // public — preview
+
+  cartItems       CartItem[]
+  favorites       Favorite[]
+  orderItems      OrderItem[]
+  downloads       Download[]
+  photoKeywords   PhotoKeyword[]
+  photoCategories PhotoCategory[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  status    PhotoStatus @default(APPROVED)
+  deletedAt DateTime?
+  licenses  License[]
+  earnings  Earning[]
+
+  @@index([title])
+  @@index([createdAt])
+  eventPhotos EventPhoto[]
+}
+
+model Keyword {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  photoKeywords PhotoKeyword[]
+}
+
+// ─── PHOTOGRAPHER ───────────────────────
+
+model Photographer {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  bio       String?
+  avatarKey String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── CATEGORY ───────────────────────────
+
+model Category {
+  id              String          @id @default(uuid())
+  name            String          @unique
+  description     String?
+  photoCategories PhotoCategory[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+// relasi many-to-many Photo-Category
+model PhotoCategory {
+  id         String @id @default(uuid())
+  photoId    String
+  categoryId String
+
+  photo    Photo    @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([photoId, categoryId])
+}
+
+// ─── CART ───────────────────────────────
+
+model CartItem {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  photoId   String
+  photo     Photo       @relation(fields: [photoId], references: [id])
+  license   LicenseType
+  createdAt DateTime    @default(now())
+
+  @@unique([userId, photoId, license])
+}
+
+// ─── FAVORITES ──────────────────────────
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  photoId   String
+  photo     Photo    @relation(fields: [photoId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, photoId])
+}
+
+// ─── ORDER ──────────────────────────────
+
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  total           Int
+  status          OrderStatus @default(PENDING)
+  midtransOrderId String?     @unique
+  midtransToken   String?
+  paidAt          DateTime?
+  items           OrderItem[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  licenses        License[]
+  voucherRedemptions VoucherRedemption[]
+
+  standarLicenseRedeemed Boolean  @default(false)
+
+  // ── diskon (platform menanggung) ──
+  discountAmount  Int      @default(0)
+  voucherId       String?
+  voucher         Voucher? @relation("OrderVoucher", fields: [voucherId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model BillingInstallment {
+  id             String   @id @default(uuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  monthNumber    Int
+  amount         Int
+  status         String   @default("PENDING")
+  midtransOrderId String?
+  snapToken      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([subscriptionId])
+}
+
+model Setting {
+  key       String   @id
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrderItem {
+  id          String      @id @default(uuid())
+  orderId     String
+  order       Order       @relation(fields: [orderId], references: [id])
+  photoId     String
+  photo       Photo       @relation(fields: [photoId], references: [id])
+  licenseType LicenseType
+  price       Int
+}
+
+// ─── DOWNLOAD ───────────────────────────
+
+model Download {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  photoId      String
+  photo        Photo    @relation(fields: [photoId], references: [id])
+  downloadedAt DateTime @default(now())
+  licenseId    String
+  license      License  @relation(fields: [licenseId], references: [id])
+
+  @@index([userId])
+  @@index([photoId])
+}
+
+// ─── SUBSCRIPTION ───────────────────────
+
+model Subscription {
+  id              String             @id @default(uuid())
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id])
+  planId          String
+  plan            Plan               @relation(fields: [planId], references: [id])
+  quota           Int
+  used            Int                @default(0)
+  billing         String
+  payOption       String
+  price           Int
+  status          SubscriptionStatus @default(ACTIVE)
+  midtransOrderId String?            @unique
+  startedAt       DateTime           @default(now())
+  expiresAt       DateTime
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  billingInstallments BillingInstallment[]
+  voucherRedemptions VoucherRedemption[]
+
+  // ── diskon (platform menanggung) ──
+  discountAmount  Int      @default(0)
+  voucherId       String?
+  voucher         Voucher? @relation("SubVoucher", fields: [voucherId], references: [id], onDelete: SetNull)
+}
+
+// untuk backup refresh token di db
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// photo keyword
+model PhotoKeyword {
+  id        String @id @default(uuid())
+  photoId   String
+  keywordId String
+
+  photo   Photo   @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@unique([photoId, keywordId])
+}
+
+model License {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  photoId   String?
+  photo     Photo?      @relation(fields: [photoId], references: [id])
+  type      LicenseType
+  orderId   String? // null kalau dapat dari subscription
+  order     Order?      @relation(fields: [orderId], references: [id])
+  expiresAt DateTime? // null = selamanya
+  licenseKey String? // path ke PDF license di Minio
+  createdAt DateTime    @default(now())
+
+  downloads Download[]
+
+  @@unique([userId, type, photoId], name: "uq_license_user_type_photo")
+  @@index([userId])
+}
+
+model Plan {
+  id            String         @id @default(uuid())
+  quota         Int
+  priceMonthly  Int
+  priceAnnual   Int
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+  eventPlans    EventPlan[]
+}
+
+// ─── EARNING (immutable ledger) ────────
+
+model Earning {
+  id            String        @id @default(uuid())
+  contributorId String
+  contributor   User          @relation(fields: [contributorId], references: [id])
+  photoId       String?
+  photo         Photo?        @relation(fields: [photoId], references: [id])
+  source        EarningSource
+  amount        Int
+  orderId       String?
+  period        String?
+  createdAt     DateTime      @default(now())
+
+  @@index([contributorId])
+  @@index([period])
+  // Guards STANDAR against double-creation when both webhook and polling
+  // mark the same order PAID. orderId/photoId are null for SUBSCRIPTION rows,
+  // where idempotency is handled by SettlementRun instead.
+  @@unique([orderId, photoId, source], name: "uq_earning_order_photo_source")
+}
+
+// ─── PAYOUT ─────────────────────────────
+
+model Payout {
+  id            String       @id @default(uuid())
+  contributorId String
+  contributor   User         @relation(fields: [contributorId], references: [id])
+  amount        Int
+  method        String
+  reference     String?
+  note          String?
+  status        PayoutStatus @default(COMPLETED)
+  processedBy   String?
+  createdAt     DateTime     @default(now())
+  processedAt   DateTime?
+
+  @@index([contributorId])
+}
+
+// ─── CONTRIBUTOR BALANCE (denormalized) ─
+
+model ContributorBalance {
+  id             String   @id @default(uuid())
+  contributorId  String   @unique
+  contributor    User     @relation(fields: [contributorId], references: [id])
+  pending        Int      @default(0)
+  paidOut        Int      @default(0)
+  lifetimeEarned Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+// ─── SETTLEMENT RUN (idempotency) ───────
+
+model SettlementRun {
+  id               String   @id @default(uuid())
+  period           String   @unique
+  totalPool        Int
+  totalDistributed Int
+  ranAt            DateTime @default(now())
+  ranBy            String?
+}
+
+// ─── DISCOUNT: VOUCHER (kode diskon) ────
+
+model Voucher {
+  id            String           @id @default(uuid())
+  code          String           @unique
+  description   String?
+  scope         VoucherScope     @default(BOTH)
+  valueType     DiscountValueType @default(PERCENT)
+  value         Int              // persen (0-100) atau nominal rupiah
+  maxDiscount   Int?             // cap nominal utk PERCENT
+  minSpend      Int?
+  startsAt      DateTime
+  endsAt        DateTime
+  isActive      Boolean          @default(true)
+  quotaTotal    Int?             // null = unlimited
+  quotaPerUser  Int              @default(1)
+  usedCount     Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  redemptions   VoucherRedemption[]
+  orders        Order[]        @relation("OrderVoucher")
+  subscriptions Subscription[] @relation("SubVoucher")
+
+  @@index([scope])
+  @@index([isActive])
+}
+
+model VoucherRedemption {
+  id             String   @id @default(uuid())
+  voucherId      String
+  voucher        Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  orderId        String?
+  order          Order?   @relation(fields: [orderId], references: [id])
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  amountCut      Int      @default(0) // nominal diskon yang dipakai
+  createdAt      DateTime @default(now())
+
+  @@index([voucherId, userId])
+  @@index([orderId])
+  @@index([subscriptionId])
+}
+
+// ─── DISCOUNT: EVENT (tanpa kode) ───────
+
+model EventDiscount {
+  id          String           @id @default(uuid())
+  name        String
+  description String?
+  valueType   DiscountValueType @default(PERCENT)
+  value       Int
+  maxDiscount Int?
+  startsAt    DateTime
+  endsAt      DateTime
+  isActive    Boolean          @default(true)
+  targetType  EventTargetType  // PHOTO | PLAN
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  eventPhotos EventPhoto[]
+  eventPlans  EventPlan[]
+
+  @@index([targetType])
+  @@index([isActive])
+}
+
+model EventPhoto {
+  id        String       @id @default(uuid())
+  eventId   String
+  event     EventDiscount @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  photoId   String
+  photo     Photo        @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, photoId])
+}
+
+model EventPlan {
+  id        String       @id @default(uuid())
+  eventId   String
+  event     EventDiscount @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, planId])
+}

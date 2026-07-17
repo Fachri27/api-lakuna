@@ -1,0 +1,1 @@
+{"version":3,"file":"favorite.schema.js","sourceRoot":"","sources":["../../../src/modules/favorite/favorite.schema.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,CAAC,EAAE,MAAM,KAAK,CAAC;AAGxB,MAAM,CAAC,MAAM,iBAAiB,GAAG,CAAC,CAAC,MAAM,CAAC;IACtC,IAAI,EAAE,CAAC,CAAC,MAAM,CAAC;QACX,OAAO,EAAE,CAAC,CAAC,MAAM,EAAE,CAAC,IAAI,EAAE;KAC7B,CAAC;CACL,CAAC,CAAC"}
