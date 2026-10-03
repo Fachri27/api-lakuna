@@ -351,11 +351,11 @@ export async function getPhotoByIdService(id: string) {
     const cached = await redisClient.get(cacheKey);
 
     if (cached) {
-      console.log("CACHE HIT for photo:", id);
+      if (process.env.NODE_ENV !== "production") console.log("CACHE HIT for photo:", id);
       return JSON.parse(cached);
     }
 
-    console.log("CACHE MISS for photo:", id);
+    if (process.env.NODE_ENV !== "production") console.log("CACHE MISS for photo:", id);
 
     // Query dari database
     const photo = await prisma.photo.findUnique({
@@ -405,7 +405,12 @@ export async function getPhotoByIdService(id: string) {
       if (photo.watermarkKey)
         watermarkUrl = await getPresignedUrl(photo.watermarkKey);
     } catch (urlErr) {
-      console.error("Failed to generate presigned URLs:", urlErr);
+      // File yatim (NotFound/NoSuchKey) sudah dicatat sekali per key oleh
+      // getPresignedUrl; hanya error lain yang dicatat penuh.
+      const code = (urlErr as { code?: string })?.code;
+      if (code !== "NotFound" && code !== "NoSuchKey" && code !== "NoSuchBucket") {
+        console.error("Failed to generate presigned URLs:", urlErr);
+      }
       // Fallback ke URL placeholder
     }
 
@@ -492,7 +497,7 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
   if (listKeys.length > 0) {
     await redisClient.del(listKeys);
   }
-  console.log("CACHE INVALIDATED for photo:", id);
+  if (process.env.NODE_ENV !== "production") console.log("CACHE INVALIDATED for photo:", id);
 
   return updatedPhoto;
 }
