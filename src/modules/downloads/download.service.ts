@@ -50,20 +50,24 @@ export async function getDownloadService(userId: string, query?: { page?: string
   // Format with presigned URLs
   const formattedLicenses = await Promise.all(
     licenses.map(async (license) => {
+      // Relasi photo opsional: tanpa guard, spread `...license.photo` error
+      // TS18047 saat strict (Railway build).
+      const lp = license.photo;
+      if (!lp) return { ...license, photo: null };
       let thumbUrl = null;
       let watermarkUrl = null;
       try {
-        if (license.photo.thumbKey) thumbUrl = await getPresignedUrl(license.photo.thumbKey);
-        if (license.photo.watermarkKey) watermarkUrl = await getPresignedUrl(license.photo.watermarkKey);
+        if (lp.thumbKey) thumbUrl = await getPresignedUrl(lp.thumbKey);
+        if (lp.watermarkKey) watermarkUrl = await getPresignedUrl(lp.watermarkKey);
       } catch {
         // Silent fail - fallback to picsum
       }
       return {
         ...license,
         photo: {
-          ...license.photo,
-          thumbUrl: thumbUrl || `https://picsum.photos/seed/${license.photo.id}/400/300`,
-          watermarkUrl: watermarkUrl || `https://picsum.photos/seed/${license.photo.id}/800/600`,
+          ...lp,
+          thumbUrl: thumbUrl || `https://picsum.photos/seed/${lp.id}/400/300`,
+          watermarkUrl: watermarkUrl || `https://picsum.photos/seed/${lp.id}/800/600`,
         },
       };
     }),
@@ -104,16 +108,28 @@ export async function downloadPhotoService(data: {
      },
    });
 
-   if (standardLicense) {
-     // Jika ada license STANDAR, langsung bisa download
-     let url: string;
-     try {
-       url = await getPresignedUrl(standardLicense.photo.originalKey);
-     } catch {
-       throw new AppError(500, "DOWNLOAD_FAILED", "Gagal membuat link download, coba lagi nanti");
-     }
-     return url;
-   }
+    if (standardLicense) {
+      const lp = standardLicense.photo;
+      if (!lp?.originalKey) {
+        throw new AppError(500, "DOWNLOAD_FAILED", "Gagal membuat link download, coba lagi nanti");
+      }
+      // Catat setiap unduhan sukses — dibaca settlement earning
+      await prisma.download.create({
+        data: {
+          userId: data.userId,
+          photoId: data.photoId,
+          licenseId: standardLicense.id,
+        },
+      });
+      // Jika ada license STANDAR, langsung bisa download
+      let url: string;
+      try {
+        url = await getPresignedUrl(lp.originalKey, 3600, "attachment");
+      } catch {
+        throw new AppError(500, "DOWNLOAD_FAILED", "Gagal membuat link download, coba lagi nanti");
+      }
+      return url;
+    }
 
    // Jika tidak ada license STANDAR, cek apakah user punya SUBSCRIBE
    const subscription = await prisma.subscription.findUnique({
@@ -124,33 +140,35 @@ export async function downloadPhotoService(data: {
      throw new AppError(403, "NO_LICENSE", "Anda tidak memiliki license");
    }
 
-   // Validasi subscription
-   const now = new Date();
-   if (subscription.expiresAt < now) {
-     throw new AppError(403, "SUBSCRIPTION_EXPIRED", "Subscription Anda sudah kadaluarsa");
-   }
+    // Validasi subscription
+    const now = new Date();
+    if (subscription.status !== SubscriptionStatus.ACTIVE) {
+      throw new AppError(403, "SUBSCRIPTION_INACTIVE", "Subscription Anda tidak aktif");
+    }
+    if (subscription.expiresAt < now) {
+      throw new AppError(403, "SUBSCRIPTION_EXPIRED", "Subscription Anda sudah kadaluarsa");
+    }
 
-   // Cek quota dan increment atomically
-   const updated = await prisma.$transaction(async (tx) => {
-     // Re-check subscription with lock
-     const sub = await tx.subscription.findUnique({
-       where: { userId: data.userId },
-     });
+    // Cek quota dan increment atomically
+    const updated = await prisma.$transaction(async (tx) => {
+      // Re-check subscription with lock
+      const sub = await tx.subscription.findUnique({
+        where: { userId: data.userId },
+      });
 
-     if (!sub) {
-       throw new AppError(403, "NO_SUBSCRIPTION", "Anda tidak memiliki subscription aktif");
-     }
+      if (!sub) {
+        throw new AppError(403, "NO_SUBSCRIPTION", "Anda tidak memiliki subscription aktif");
+      }
 
-     // Check apakah subscription sudah kadaluarsa
-     const now = new Date();
-     if (sub.expiresAt < now) {
-       throw new AppError(403, "SUBSCRIPTION_EXPIRED", "Subscription Anda sudah kadaluarsa");
-     }
+      if (sub.status !== SubscriptionStatus.ACTIVE) {
+        throw new AppError(403, "SUBSCRIPTION_INACTIVE", "Subscription Anda tidak aktif");
+      }
 
-     // Check quota
-     if (sub.used >= sub.quota) {
-       throw new AppError(403, "QUOTA_EXCEEDED", "Kuota subscription Anda sudah habis");
-     }
+      // Check apakah subscription sudah kadaluarsa
+      const now = new Date();
+      if (sub.expiresAt < now) {
+        throw new AppError(403, "SUBSCRIPTION_EXPIRED", "Subscription Anda sudah kadaluarsa");
+      }
 
 // Create per-photo subscription license record if not already created
       const existingSubLicense = await tx.license.findFirst({
@@ -161,21 +179,48 @@ export async function downloadPhotoService(data: {
         },
       });
 
-      if (!existingSubLicense) {
-        await tx.license.create({
+      if (existingSubLicense) {
+        // Re-download: jangan increment kuota lagi, langsung catat Download
+        await tx.download.create({
           data: {
             userId: data.userId,
             photoId: data.photoId,
-            type: LicenseType.SUBSCRIBE,
-            expiresAt: sub.expiresAt,
+            licenseId: existingSubLicense.id,
           },
         });
+        return existingSubLicense;
       }
 
-      // Atomic increment
-      return await tx.subscription.update({
-        where: { userId: data.userId },
+      // Klaim kuota atomik: hanya berhasil bila used < quota
+      const claimed = await tx.subscription.updateMany({
+        where: { userId: data.userId, used: { lt: sub.quota } },
         data: { used: { increment: 1 } },
+      });
+
+      if (claimed.count === 0) {
+        throw new AppError(403, "QUOTA_EXCEEDED", "Kuota subscription Anda sudah habis");
+      }
+
+      const newLicense = await tx.license.create({
+        data: {
+          userId: data.userId,
+          photoId: data.photoId,
+          type: LicenseType.SUBSCRIBE,
+          expiresAt: sub.expiresAt,
+        },
+      });
+
+      await tx.download.create({
+        data: {
+          userId: data.userId,
+          photoId: data.photoId,
+          licenseId: newLicense.id,
+        },
+      });
+
+      // Atomic increment
+      return await tx.subscription.findUniqueOrThrow({
+        where: { userId: data.userId },
       });
     });
 
@@ -184,7 +229,7 @@ export async function downloadPhotoService(data: {
    // Generate presigned URL
    let url: string;
    try {
-     url = await getPresignedUrl(photo.originalKey);
+     url = await getPresignedUrl(photo.originalKey, 3600, "attachment");
    } catch {
      throw new AppError(500, "DOWNLOAD_FAILED", "Gagal membuat link download, coba lagi nanti");
    }

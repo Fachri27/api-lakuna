@@ -1,6 +1,5 @@
 import { Router } from "express";
 import passport from "passport";
-// @ts-ignore - passport-google-oauth20 not installed yet
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { prisma } from "../../config/db.js";
 import { signAccessToken, signRefreshToken } from "../../utils/jwt.js";
