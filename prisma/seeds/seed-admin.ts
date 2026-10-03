@@ -35,7 +35,8 @@ function validate(email: string, password: string) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("ADMIN_EMAIL bukan email yang valid");
   if (password.length < MIN_LEN) throw new Error(`ADMIN_PASSWORD minimal ${MIN_LEN} karakter`);
   if (WEAK.has(password.toLowerCase())) throw new Error("ADMIN_PASSWORD terlalu umum — pilih yang lain");
-  if (password.toLowerCase().includes(email.split("@")[0].toLowerCase()) && email.split("@")[0].length >= 4) {
+  const local = (email.split("@")[0] ?? "").toLowerCase();
+  if (local.length >= 4 && password.toLowerCase().includes(local)) {
     throw new Error("ADMIN_PASSWORD tidak boleh memuat nama email");
   }
   if (!/[a-z]/i.test(password) || !/\d/.test(password)) {
@@ -50,7 +51,7 @@ async function main() {
   const password = need("ADMIN_PASSWORD");
   validate(email, password);
 
-  const username = (process.env.ADMIN_USERNAME?.trim() || email.split("@")[0]).replace(/[^a-zA-Z0-9._-]/g, "");
+  const username = (process.env.ADMIN_USERNAME?.trim() || email.split("@")[0] || "").replace(/[^a-zA-Z0-9._-]/g, "");
   if (!username) throw new Error("ADMIN_USERNAME tidak valid");
   const realName = process.env.ADMIN_NAME?.trim() || "Administrator";
   const reset = process.argv.includes("--reset-password");
