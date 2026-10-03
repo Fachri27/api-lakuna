@@ -64,6 +64,7 @@ app.use(cookieParser());
 // Dinormalkan: spasi, tanda kutip, dan garis miring di akhir dibuang — origin
 // browser tidak pernah berakhiran "/", jadi "https://app.vercel.app/" di dashboard
 // tidak akan cocok dan seluruh panggilan frontend ditolak.
+const corsRejectedLogged = new Set<string>();
 const normalizeOrigin = (o: string) => o.trim().replace(/^["']+|["']+$/g, "").replace(/\/+$/, "");
 const allowedOrigins = process.env.CORS_ORIGINS?.split(",").map(normalizeOrigin).filter(Boolean) || [
   "http://localhost:3000",
@@ -85,7 +86,14 @@ app.use(
       if (allowedOrigins.includes(normalizeOrigin(origin))) {
         return callback(null, true);
       }
-      return callback(new Error("Not allowed by CORS"));
+      // Tolak tanpa melempar error (tanpa stack trace / 500): header CORS tidak
+      // dikirim, browser yang memblokir. Origin dicatat SEKALI supaya jelas
+      // alamat mana yang perlu ditambahkan ke CORS_ORIGINS.
+      if (!corsRejectedLogged.has(origin) && corsRejectedLogged.size < 200) {
+        corsRejectedLogged.add(origin);
+        console.warn(`[cors] ditolak: ${origin} — tambahkan ke CORS_ORIGINS bila ini alamat milikmu`);
+      }
+      return callback(null, false);
     },
     credentials: true, // Allow cookies
     exposedHeaders: [
