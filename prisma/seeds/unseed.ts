@@ -6,6 +6,10 @@
 //   seed-photos, awalan "[Dummy] "). Foto lain tidak disentuh.
 // - Foto yang sudah punya pesanan / unduhan / lisensi / pendapatan DILEWATI
 //   (dilaporkan), supaya riwayat transaksi tak rusak.
+// - Foto yang sudah DIEDIT sesudah dibuat (updatedAt jauh sesudah createdAt —
+//   mis. file aslinya diganti lewat CMS tapi judul "[Dummy] …" tetap) DILEWATI,
+//   agar media asli tak ikut terhapus. Paksa hapus dengan --include-edited.
+//   Atau lindungi per judul: --keep="Judul A|Judul B".
 // - Target DB selain localhost wajib --yes (lihat _guard.ts).
 //
 //   DATABASE_URL="<url>" node --import tsx/esm prisma/seeds/unseed.ts --yes            # dry-run
@@ -23,6 +27,13 @@ const prisma = new PrismaClient();
 const APPLY = process.argv.includes("--apply");
 const FILES = process.argv.includes("--files");
 const ACCOUNTS = process.argv.includes("--accounts");
+const INCLUDE_EDITED = process.argv.includes("--include-edited");
+const KEEP_TITLES = new Set(
+  (process.argv.find((a) => a.startsWith("--keep="))?.slice("--keep=".length) ?? "")
+    .split("|").map((t) => t.trim()).filter(Boolean),
+);
+// Selisih updatedAt-createdAt di atas ini dianggap "sudah diedit".
+const EDITED_AFTER_MS = 60_000;
 
 const SEED_TITLES = [
   // seed-media
@@ -51,18 +62,27 @@ async function main() {
     where: { OR: [{ title: { in: SEED_TITLES } }, { title: { startsWith: DUMMY_PREFIX } }] },
     select: {
       id: true, title: true, type: true, originalKey: true, thumbKey: true, watermarkKey: true, deletedAt: true,
+      createdAt: true, updatedAt: true,
       _count: { select: { orderItems: true, downloads: true, licenses: true, Earning: true } },
     },
   });
 
-  const protectedPhotos = photos.filter((p) => p._count.orderItems + p._count.downloads + p._count.licenses + p._count.Earning > 0);
-  const deletable = photos.filter((p) => !protectedPhotos.includes(p));
+  const hasTx = (p: (typeof photos)[number]) => p._count.orderItems + p._count.downloads + p._count.licenses + p._count.Earning > 0;
+  const isEdited = (p: (typeof photos)[number]) => !INCLUDE_EDITED && p.updatedAt.getTime() - p.createdAt.getTime() > EDITED_AFTER_MS;
+  const protectedWhy = new Map<string, string>();
+  for (const p of photos) {
+    if (hasTx(p)) protectedWhy.set(p.id, "pesanan/unduhan/lisensi/pendapatan");
+    else if (KEEP_TITLES.has(p.title)) protectedWhy.set(p.id, "dilindungi lewat --keep");
+    else if (isEdited(p)) protectedWhy.set(p.id, "sudah diedit (kemungkinan media asli)");
+  }
+  const protectedPhotos = photos.filter((p) => protectedWhy.has(p.id));
+  const deletable = photos.filter((p) => !protectedWhy.has(p.id));
 
   console.log(`Foto cocok daftar seeder : ${photos.length}`);
   console.log(`  → akan dihapus         : ${deletable.length}`);
-  console.log(`  → DILEWATI (punya transaksi): ${protectedPhotos.length}`);
+  console.log(`  → DILEWATI (dilindungi)  : ${protectedPhotos.length}`);
   for (const p of deletable) console.log(`     - ${p.type} "${p.title}"${p.deletedAt ? " (sudah soft-delete)" : ""}`);
-  for (const p of protectedPhotos) console.log(`     ! dilewati "${p.title}" (pesanan/unduhan/lisensi/pendapatan)`);
+  for (const p of protectedPhotos) console.log(`     ! dilewati ${p.type} "${p.title}" (${protectedWhy.get(p.id)})`);
 
   let accountsToDelete: { id: string; email: string }[] = [];
   if (ACCOUNTS) {
