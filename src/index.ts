@@ -55,7 +55,11 @@ app.use(express.urlencoded({ extended: true, limit: "1mb" })); // Untuk form-dat
 app.use(cookieParser());
 
 // CORS configuration - use environment variable for allowed origins
-const allowedOrigins = process.env.CORS_ORIGINS?.split(",") || [
+// Dinormalkan: spasi, tanda kutip, dan garis miring di akhir dibuang — origin
+// browser tidak pernah berakhiran "/", jadi "https://app.vercel.app/" di dashboard
+// tidak akan cocok dan seluruh panggilan frontend ditolak.
+const normalizeOrigin = (o: string) => o.trim().replace(/^["']+|["']+$/g, "").replace(/\/+$/, "");
+const allowedOrigins = process.env.CORS_ORIGINS?.split(",").map(normalizeOrigin).filter(Boolean) || [
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
@@ -72,7 +76,7 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, curl, etc.)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes(normalizeOrigin(origin))) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));
