@@ -1,6 +1,11 @@
 import { Redis } from "ioredis";
 
-const redisUrl = process.env.REDIS_URL;
+// Bersihkan salah ketik umum saat menempel variabel di dashboard (spasi, tanda
+// kutip, titik/koma di akhir). URL berakhiran "6379." dibaca ioredis sebagai
+// nomor database "NaN" -> "ERR value is not an integer" saat SELECT.
+const redisUrl = process.env.REDIS_URL?.trim()
+  .replace(/^["']+|["']+$/g, "")
+  .replace(/[.,;\s]+$/, "");
 if (!redisUrl) throw new Error("REDIS_URL is required");
 
 export const redisClient = new Redis(redisUrl);
