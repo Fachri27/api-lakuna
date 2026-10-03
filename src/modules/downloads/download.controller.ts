@@ -101,6 +101,11 @@ export async function downloadLicensePdfController(
         createdAt: license.createdAt,
         expiresAt: license.expiresAt,
         orderId: license.orderId,
+        userId: license.userId,
+        username: license.user?.username || undefined,
+        photoId: license.photoId ?? undefined,
+        photoType: license.photo?.type,
+        originalKey: license.photo?.originalKey,
         issuedTo:
           license.user?.realName ||
           license.user?.username ||
@@ -118,7 +123,7 @@ export async function downloadLicensePdfController(
     }
 
     // Get presigned URL
-    const downloadUrl = await getPresignedUrl(licenseUrl);
+    const downloadUrl = await getPresignedUrl(licenseUrl, 3600, "attachment");
 
     return res.json({
       success: true,

@@ -1,0 +1,173 @@
+/**
+ * Aset PUBLIK foto/video — semua yang bisa dibuka siapa pun (termasuk lewat
+ * tab Network DevTools) harus resolusi rendah, berukuran kecil, dan
+ * ber-watermark. File asli hanya keluar lewat /api/downloads (cek lisensi).
+ *
+ *   thumbnail grid   800 px, JPEG q68, TANPA watermark tile (kartu tampil bersih;
+ *                    resolusinya terlalu kecil untuk dipakai ulang)
+ *   pratinjau foto  1000 px, JPEG q72, watermark tile
+ *   pratinjau video  640 px lebar, H.264 CRF 30, tanpa audio, watermark tile
+ *
+ * Seperti Shutterstock, gambar publik juga diberi PITA KREDIT putih di
+ * bawahnya: "lakunastock · <ID>". Tinggi pita = CREDIT_RATIO × lebar gambar;
+ * frontend memotongnya dari tampilan situs dengan object-position: top, jadi
+ * pita hanya terlihat bila berkasnya dibuka langsung (mis. dari tab Network).
+ *
+ * Dipakai buildPhotoAssets (upload baru) dan scripts/regen-public-assets.ts
+ * (menyamakan data lama).
+ */
+import sharp from "sharp";
+import { execSync } from "child_process";
+import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { buildTiledSkewedWatermarkOverlay } from "./watermarkLogo.js";
+
+export const THUMB_W = 800;
+export const THUMB_Q = 68;
+export const PREVIEW_W = 1000;
+export const PREVIEW_Q = 72;
+export const VIDEO_W = 640;
+export const VIDEO_CRF = 30;
+
+const FFMPEG = process.env.FFMPEG_BIN || "ffmpeg";
+
+/** Tinggi pita kredit relatif terhadap lebar gambar (800 px → 40 px). */
+export const CREDIT_RATIO = 0.05;
+export const CREDIT_BRAND = "lakunastock";
+
+/** Kode ID pendek di pita: 8 karakter pertama UUID, huruf besar. */
+export function creditCode(id: string) {
+  return id.replace(/-/g, "").slice(0, 8).toUpperCase();
+}
+
+const escXml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Tempel pita putih di bawah gambar berisi "lakunastock · ID". */
+async function addCreditBar(img: Buffer, id: string | undefined, quality: number): Promise<Buffer> {
+  if (!id) return img;
+  const meta = await sharp(img).metadata();
+  const w = meta.width ?? 480;
+  const h = meta.height ?? 320;
+  const barH = Math.max(18, Math.round(w * CREDIT_RATIO));
+  const fontSize = Math.round(barH * 0.52);
+  const label = `${CREDIT_BRAND} · ${creditCode(id)}`;
+  const bar = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${barH}">` +
+      `<rect width="100%" height="100%" fill="#ffffff"/>` +
+      `<text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" ` +
+      `font-family="DejaVu Sans, Helvetica, Arial, sans-serif" font-size="${fontSize}" fill="#3a3d42">${escXml(label)}</text>` +
+      `</svg>`,
+  );
+  return sharp({ create: { width: w, height: h + barH, channels: 3, background: "#ffffff" } })
+    .composite([
+      { input: img, top: 0, left: 0 },
+      { input: bar, top: h, left: 0 },
+    ])
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+}
+
+/** Perkecil, tempel watermark tile, lalu pita kredit. Gagal watermark → tetap diperkecil. */
+async function shrinkAndWatermark(input: Buffer, width: number, quality: number, id?: string): Promise<Buffer> {
+  const base = await sharp(input)
+    .rotate() // hormati orientasi EXIF
+    .resize({ width, withoutEnlargement: true })
+    .toBuffer();
+  const meta = await sharp(base).metadata();
+  try {
+    const overlay = await buildTiledSkewedWatermarkOverlay(meta.width ?? width, meta.height ?? width);
+    const marked = await sharp(base)
+      .composite([{ input: overlay, top: 0, left: 0 }])
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+    return await addCreditBar(marked, id, quality);
+  } catch (err) {
+    console.error("[publicAssets] watermark gagal, pakai versi kecil tanpa watermark:", err);
+    return sharp(base).jpeg({ quality, mozjpeg: true }).toBuffer();
+  }
+}
+
+/** Thumbnail kartu: diperkecil + pita kredit, tanpa watermark tile. */
+export async function makeThumb(image: Buffer, id?: string): Promise<Buffer> {
+  const base = await sharp(image)
+    .rotate() // hormati orientasi EXIF
+    .resize({ width: THUMB_W, withoutEnlargement: true })
+    .jpeg({ quality: THUMB_Q, mozjpeg: true })
+    .toBuffer();
+  return addCreditBar(base, id, THUMB_Q);
+}
+
+export function makePreviewImage(image: Buffer, id?: string): Promise<Buffer> {
+  return shrinkAndWatermark(image, PREVIEW_W, PREVIEW_Q, id);
+}
+
+/**
+ * Pratinjau video: 640 px, CRF 30, tanpa audio, watermark tile ditumpuk
+ * lewat ffmpeg overlay. Overlay dibuat 640×1280 supaya video potret pun
+ * tertutup; bagian yang melampaui bingkai dipotong otomatis oleh ffmpeg.
+ * Mengembalikan false bila ffmpeg gagal (pemanggil memakai cadangan).
+ */
+export async function makePreviewVideo(inputPath: string, outPath: string): Promise<boolean> {
+  const dir = mkdtempSync(join(tmpdir(), "lakuna-wm-"));
+  const wmPath = join(dir, "wm.png");
+  try {
+    writeFileSync(wmPath, await buildTiledSkewedWatermarkOverlay(VIDEO_W, VIDEO_W * 2));
+    execSync(
+      `"${FFMPEG}" -i "${inputPath}" -i "${wmPath}" ` +
+        `-filter_complex "[0:v]scale=${VIDEO_W}:-2[v];[v][1:v]overlay=0:0" ` +
+        `-c:v libx264 -preset fast -crf ${VIDEO_CRF} -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
+      { stdio: "pipe" },
+    );
+    return true;
+  } catch (err: any) {
+    console.error("[publicAssets] ffmpeg pratinjau video gagal:", err?.stderr?.toString() || err?.message);
+    return false;
+  } finally {
+    try { unlinkSync(wmPath); } catch {}
+  }
+}
+
+/** Durasi klip kartu (hover di contact sheet / grid video). */
+export const CLIP_SECONDS = 8;
+
+/**
+ * Kunci klip kartu diturunkan dari kunci pratinjau: watermark/<n>.mp4 →
+ * clip/<n>.mp4. Tanpa kolom database baru; klip yang belum dibuat cukup
+ * gagal di-stat dan kartu memakai pratinjau ber-watermark.
+ */
+export function clipKeyFor(watermarkKey: string | null | undefined): string | null {
+  if (!watermarkKey || !watermarkKey.startsWith("watermark/")) return null;
+  return `clip/${watermarkKey.slice("watermark/".length).replace(/\.[^.]+$/, "")}.mp4`;
+}
+
+/**
+ * Klip kartu: 8 detik pertama pada RESOLUSI ASLI (tanpa diperkecil), CRF 24,
+ * tanpa audio, tanpa watermark — kartu tampil setajam berkasnya. Pendek,
+ * jadi tetap ringan dimuat saat hover.
+ * `input` boleh path lokal atau URL (ffmpeg hanya membaca awal berkas).
+ */
+export function makeClipVideo(input: string, outPath: string): boolean {
+  try {
+    execSync(
+      `"${FFMPEG}" -t ${CLIP_SECONDS} -i "${input}" ` +
+        `-c:v libx264 -preset fast -crf 24 -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
+      { stdio: "pipe" },
+    );
+    return true;
+  } catch (err: any) {
+    console.error("[publicAssets] ffmpeg klip kartu gagal:", err?.stderr?.toString() || err?.message);
+    return false;
+  }
+}
+
+/** Frame video (detik ke-1) → JPEG mentah untuk dijadikan thumbnail. */
+export function grabVideoFrame(inputPath: string, outPath: string): boolean {
+  try {
+    execSync(`"${FFMPEG}" -i "${inputPath}" -ss 00:00:01 -vframes 1 -q:v 3 "${outPath}" -y`, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}

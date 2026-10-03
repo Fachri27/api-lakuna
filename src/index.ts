@@ -28,8 +28,24 @@ import routerEarning from "./modules/earning/earning.router.js";
 import routerPayout from "./modules/payout/payout.router.js";
 import routerVoucher from "./modules/voucher/voucher.router.js";
 import routerEvent from "./modules/event/event.router.js";
+import routerLicenseTemplate from "./modules/licenseTemplate/licenseTemplate.router.js";
+import routerHomepage from "./modules/homepage/homepage.router.js";
 import cron from "node-cron";
 import { runSettlement } from "./modules/earning/earning.service.js";
+
+// Error jaringan dari socket yang sudah putus (mis. storage lewat tunnel
+// yang mati) kadang dipancarkan di luar rantai promise dan menjatuhkan SELURUH
+// API ("write EPIPE" pada TLSSocket). Yang seperti itu cukup dicatat; error
+// lain tetap fatal supaya bug sungguhan tidak tersembunyi.
+const SOCKET_ERRORS = new Set(["EPIPE", "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+  if (err?.code && SOCKET_ERRORS.has(err.code)) {
+    console.error(`[net] ${err.code} diabaikan (socket putus):`, err.message);
+    return;
+  }
+  console.error(err);
+  process.exit(1);
+});
 
 const app = express();
 
@@ -43,9 +59,12 @@ const allowedOrigins = process.env.CORS_ORIGINS?.split(",") || [
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
+  "http://localhost:3003",
   "http://localhost:5175",
   "http://localhost:5173",
   "http://localhost:5174",
+  "http://localhost:5176",
+  "http://localhost:5177",
 ];
 
 app.use(
@@ -103,6 +122,10 @@ app.use("/api/auth", routerAuth);
 
 // stats
 app.use("/api/admin", routerStats);
+app.use("/api/stats", routerStats);
+
+// template lisensi PDF custom (admin)
+app.use("/api/admin/license-template", routerLicenseTemplate);
 
 // photos
 app.use("/api/photos", routerPhoto);
@@ -133,6 +156,9 @@ app.use("/api/plans", routerPlan);
 
 // setting
 app.use("/api/settings", routerSetting);
+
+// homepage (konten hero/manifesto/anjungan/mulai — disimpan di tabel Setting)
+app.use("/api/homepage", routerHomepage);
 
 // keyword
 app.use("/api/keywords", routerKeyword);

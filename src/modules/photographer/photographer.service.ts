@@ -3,8 +3,8 @@ import { GetPhotographersInput, CreatePhotographerInput } from "./photographer.s
 import { AppError } from "../../middlewares/errorHandler.js";
 
 export async function getPhotographersService(query: GetPhotographersInput) {
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 50;
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
   const skip = (page - 1) * limit;
 
   const where = query.search

@@ -32,11 +32,11 @@ export async function updateUserRoleController(
     const userId = req.params.id as string;
     const { role } = req.body;
 
-    if (!role || !["USER", "ADMIN"].includes(role)) {
-      throw new AppError(400, "INVALID_ROLE", "Role harus USER atau ADMIN");
+    if (!role || !["USER", "ADMIN", "CONTRIBUTOR"].includes(role)) {
+      throw new AppError(400, "INVALID_ROLE", "Role harus USER, ADMIN, atau CONTRIBUTOR");
     }
 
-    const user = await updateUserRoleService(userId, role as "USER" | "ADMIN");
+    const user = await updateUserRoleService(userId, role as "USER" | "ADMIN" | "CONTRIBUTOR");
 
     return res.json({
       success: true,

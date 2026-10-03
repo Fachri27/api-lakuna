@@ -303,7 +303,13 @@ export async function deleteMeService(data: {
 }
 
 // Admin: Update user role
-export async function updateUserRoleService(userId: string, role: "USER" | "ADMIN") {
+export async function updateUserRoleService(targetUserId: string, role: "USER" | "ADMIN" | "CONTRIBUTOR", actorUserId?: string) {
+    // Self-demote guard: admin tidak boleh mengubah role dirinya sendiri
+    if (actorUserId && targetUserId === actorUserId) {
+        throw new AppError(403, "CANNOT_CHANGE_OWN_ROLE", "Tidak dapat mengubah role sendiri");
+    }
+
+    const userId = targetUserId;
     const user = await prisma.user.findUnique({
         where: {
             id: userId,

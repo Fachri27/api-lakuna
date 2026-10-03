@@ -70,8 +70,19 @@ export async function refreshController(
     try {
       const refreshToken = req.body.refreshToken || req.cookies?.refreshToken;
 
-      // verify jwt
-      const payload = verifyRefreshToken(refreshToken) as { userId: string};
+      // verify jwt — token rusak/kedaluwarsa → 401, bukan 500
+      let payload: { userId: string };
+      try {
+        payload = verifyRefreshToken(refreshToken) as { userId: string };
+      } catch {
+        return res.status(401).json({
+          success: false,
+          error: {
+            code: "INVALID_REFRESH_TOKEN",
+            message: "Refresh token tidak valid",
+          },
+        });
+      }
 
       // cek redis
       const savedToken = await redisClient.get(
@@ -144,10 +155,14 @@ export async function logoutController(
 ) {
   try {
 
-    // header auth
+    // header auth, fallback ke cookie (samakan authMiddleware)
     const authHeader = req.headers.authorization;
 
-    const accessToken = authHeader?.split(" ")[1];
+    let accessToken = authHeader?.split(" ")[1];
+
+    if (!accessToken && req.cookies?.accessToken) {
+      accessToken = req.cookies.accessToken;
+    }
 
     if(!accessToken) {
       return res.status(401).json({

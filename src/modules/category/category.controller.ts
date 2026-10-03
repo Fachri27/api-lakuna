@@ -42,6 +42,10 @@ export async function GetCategoryByIdController(
 
     const category = await getCategoryByIdService(id);
 
+    if (!category) {
+      throw new AppError(404, "NOT_FOUND", "Category tidak ditemukan");
+    }
+
     return res.json({
       success: true,
       data: category,
@@ -58,7 +62,8 @@ export async function CreateCategoryController(
   next: NextFunction,
 ) {
   try {
-    const category = await createCategoryService(req.body);
+    const file = req.file as Express.Multer.File | undefined;
+    const category = await createCategoryService(req.body, file);
 
     return res.status(201).json({
       success: true,
@@ -66,7 +71,6 @@ export async function CreateCategoryController(
       message: "Category berhasil dibuat",
     });
   } catch (err: any) {
-    // Handle specific Prisma errors
     if (err.code === "P2002") {
       return res.status(409).json({
         success: false,
@@ -93,7 +97,8 @@ export async function UpdateCategoryController(
       throw new Error("ID category tidak valid");
     }
 
-    const category = await updateCategoryService(id, req.body as any);
+    const file = req.file as Express.Multer.File | undefined;
+    const category = await updateCategoryService(id, req.body as any, file);
 
     return res.json({
       success: true,

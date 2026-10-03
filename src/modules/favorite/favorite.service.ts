@@ -204,3 +204,35 @@ export async function deleteFavoriteService(
 
     return true;
 }
+
+// Hapus favorit langsung berdasar photoId (milik user sendiri). Idempoten:
+// sudah tidak ada = dianggap sudah ter-unlike, tetap sukses supaya retry
+// client tak melempar error. Satu request, tanpa GET list dulu — menutup
+// jendela race double-tap di tunnel lambat.
+export async function deleteFavoriteByPhotoService(
+    data:{
+        userId: string,
+        photoId: string,
+    }
+) {
+    const existing = await prisma.favorite.findFirst({
+        where: {
+            userId: data.userId,
+            photoId: data.photoId,
+        },
+    });
+
+    if (existing) {
+        await prisma.favorite.delete({
+            where: {
+                id: existing.id,
+            },
+        });
+
+        await redisClient.del(
+            `favorite:${data.userId}`
+        );
+    }
+
+    return true;
+}

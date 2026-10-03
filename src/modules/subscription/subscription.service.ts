@@ -1,7 +1,9 @@
 import { prisma } from "../../config/db.js";
 import { redisClient } from "../../config/redis.js";
+import { randomUUID } from "crypto";
 import { AppError } from "../../middlewares/errorHandler.js";
 import { SubscriptionStatus } from "@prisma/client";
+import { claimVoucherQuota } from "../discount/discount.service.js";
 
 export async function getSubscriptionService(userId: string, bypassCache = false) {
   // cek cache - skip jika bypassCache = true
@@ -91,7 +93,7 @@ export async function createSubscriptionService(data: {
   price: number;
   quota: number;
   orderId: string;
-  snapToken: string;
+  snapToken: string | null;
   redirectUrl?: string;
   discountAmount?: number | undefined;
   voucherId?: string | undefined;
@@ -115,6 +117,12 @@ export async function createSubscriptionService(data: {
     expiresAt.setMonth(expiresAt.getMonth() + 1);
   }
 
+  // B4: order gratis (grossAmount 0, tanpa Snap) langsung ACTIVE.
+  const isFree = Math.max(0, data.price - (data.discountAmount ?? 0)) === 0;
+  const initialStatus = isFree
+    ? SubscriptionStatus.ACTIVE
+    : SubscriptionStatus.PENDING;
+
   const subscription = existing
     ? await prisma.subscription.update({
         where: { userId: data.userId },
@@ -127,7 +135,7 @@ export async function createSubscriptionService(data: {
           price: data.price,
           discountAmount: data.discountAmount ?? 0,
           voucherId: data.voucherId ?? null,
-          status: SubscriptionStatus.PENDING,
+          status: initialStatus,
           midtransOrderId: data.orderId,
           expiresAt,
           startedAt: new Date(),
@@ -144,7 +152,7 @@ export async function createSubscriptionService(data: {
           price: data.price,
           discountAmount: data.discountAmount ?? 0,
           voucherId: data.voucherId ?? null,
-          status: SubscriptionStatus.PENDING,
+          status: initialStatus,
           midtransOrderId: data.orderId,
           expiresAt,
         },
@@ -165,6 +173,21 @@ export async function createSubscriptionService(data: {
       });
     }
     await prisma.billingInstallment.createMany({ data: installments });
+  }
+
+  // B4: tanpa webhook untuk order gratis, catat pemakaian voucher di sini
+  // (idempoten — aman bila webhook/polling memanggil lagi untuk order ini).
+  // Pentest tahap-2 fix: claimVoucherQuota menggantikan pencatatan polos —
+  // kuota total + per-user diklaim atomik, bukan read-then-write TOCTOU.
+  if (isFree && data.voucherId && (data.discountAmount ?? 0) > 0) {
+    await prisma.$transaction(async (tx) => {
+      await claimVoucherQuota(tx, {
+        voucherId: data.voucherId as string,
+        userId: data.userId,
+        amountCut: data.discountAmount as number,
+        subscriptionId: subscription.id,
+      });
+    });
   }
 
   await redisClient.del(`subscription:${data.userId}`);
@@ -212,7 +235,8 @@ export async function payRemainingBalanceService(userId: string) {
   }
 
   const totalRemaining = pending.reduce((sum, inst) => sum + inst.amount, 0);
-  const orderId = `INST-BULK-${userId}-${Date.now()}`;
+  // B7: suffix acak agar order_id unik (Midtrans menolak order_id duplikat).
+  const orderId = `INST-BULK-${userId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 
   return { totalRemaining, orderId, installmentCount: pending.length };
 }
@@ -306,26 +330,64 @@ export async function cancelSubscriptionService(userId: string) {
   export async function createStandarPurchaseService(data: {
     userId: string;
     orderId: string;
-    snapToken: string;
+    snapToken: string | null;
     redirectUrl?: string;
     price: number;
     discountAmount?: number | undefined;
     voucherId?: string | undefined;
+    // Opsional: bila foto sudah diketahui saat checkout, sertakan OrderItem
+    // standar konsisten dengan flow cart di order.service.ts
+    // (photoId + licenseType STANDAR + price). Tanpa photoId, order tetap
+    // dibuat tanpa item karena lisensi diikat ke foto saat redeem.
+    photoId?: string | undefined;
+    photoPrice?: number | undefined;
   }) {
     const discountAmount = data.discountAmount ?? 0;
+    const total = Math.max(0, data.price - discountAmount);
+    // B4: order gratis (grossAmount 0, tanpa Snap) langsung PAID + redeemable.
+    const isFree = total === 0;
     return await prisma.$transaction(async (tx) => {
       // Buat order untuk standar plan
       const order = await tx.order.create({
         data: {
           userId: data.userId,
-          total: Math.max(0, data.price - discountAmount),
+          total,
           discountAmount,
           voucherId: data.voucherId ?? null,
-          status: "PENDING",
+          status: isFree ? "PAID" : "PENDING",
+          paidAt: isFree ? new Date() : null,
           midtransOrderId: data.orderId,
           midtransToken: data.snapToken,
+          // B4: sertakan OrderItem standar (konsisten dengan flow cart di
+          // order.service.ts) bila foto sudah diketahui saat checkout.
+          ...(data.photoId
+            ? {
+                items: {
+                  create: [
+                    {
+                      photoId: data.photoId,
+                      licenseType: "STANDAR" as const,
+                      price: data.photoPrice ?? total,
+                    },
+                  ],
+                },
+              }
+            : {}),
         },
       });
+
+      // B4: tanpa webhook untuk order gratis, catat pemakaian voucher di sini
+      // (idempoten — aman bila webhook/polling memanggil lagi untuk order ini).
+      // Pentest tahap-2 fix: claimVoucherQuota menggantikan pencatatan polos —
+      // kuota total + per-user diklaim atomik.
+      if (isFree && data.voucherId && discountAmount > 0) {
+        await claimVoucherQuota(tx, {
+          voucherId: data.voucherId,
+          userId: data.userId,
+          amountCut: discountAmount,
+          orderId: order.id,
+        });
+      }
 
       return {
         orderId: order.id,
@@ -342,6 +404,7 @@ export async function getStandarLicenseService(userId: string) {
       status: "PAID",
       standarLicenseRedeemed: false,
     },
+    orderBy: { createdAt: "asc" },
   });
 
   if (availableOrder) {
@@ -391,37 +454,46 @@ export async function getStandarLicenseService(userId: string) {
 }
 
 // Redeem standar license untuk foto tertentu
+// K5: atomik — klaim order via updateMany bersyarat; gagal bila count===0
+// sehingga dua redeem konkuren tidak bisa memakai order yang sama.
 export async function redeemStandarLicenseService(data: {
   userId: string;
   photoId: string;
 }) {
-  const order = await prisma.order.findFirst({
-    where: {
-      userId: data.userId,
-      status: "PAID",
-      standarLicenseRedeemed: false,
-    },
+  return await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: {
+        userId: data.userId,
+        status: "PAID",
+        standarLicenseRedeemed: false,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (!order) {
+      throw new AppError(404, "NO_STANDAR_LICENSE", "Anda belum membeli paket standar");
+    }
+
+    // Klaim atomik: hanya satu pemenang bila dua request berebut order ini.
+    const claim = await tx.order.updateMany({
+      where: { id: order.id, standarLicenseRedeemed: false },
+      data: { standarLicenseRedeemed: true },
+    });
+
+    if (claim.count === 0) {
+      throw new AppError(409, "LICENSE_ALREADY_REDEEMED", "Lisensi standar sudah dipakai");
+    }
+
+    // Buat license (rollback klaim bila gagal, mis. duplikat unik)
+    const license = await tx.license.create({
+      data: {
+        userId: data.userId,
+        photoId: data.photoId,
+        type: "STANDAR",
+        orderId: order.id,
+      },
+    });
+
+    return license;
   });
-
-  if (!order) {
-    throw new AppError(404, "NO_STANDAR_LICENSE", "Anda belum membeli paket standar");
-  }
-
-  // Buat license
-  const license = await prisma.license.create({
-    data: {
-      userId: data.userId,
-      photoId: data.photoId,
-      type: "STANDAR",
-      orderId: order.id,
-    },
-  });
-
-  // Tandai order sudah dipakai
-  await prisma.order.update({
-    where: { id: order.id },
-    data: { standarLicenseRedeemed: true },
-  });
-
-  return license;
 }

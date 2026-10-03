@@ -1,10 +1,12 @@
 import { prisma } from "../../config/db.js";
 import { snap } from "../../config/midtrans.js";
+import { randomUUID } from "crypto";
 import { AppError } from "../../middlewares/errorHandler.js";
 import {
   computeSubscriptionDiscount,
   validateVoucher,
   computeDiscountAmount,
+  recordVoucherRedemption,
 } from "../discount/discount.service.js";
 
 export async function createSubscriptionSnap(data: {
@@ -48,7 +50,25 @@ export async function createSubscriptionSnap(data: {
   }
   const grossAmount = Math.max(0, price - discountAmount);
 
-  const orderId = `SUB-${Date.now()}`; // Keep under 50 chars - Midtrans limit
+  // B7: suffix acak agar order_id unik (Midtrans menolak order_id duplikat).
+  const orderId = `SUB-${Date.now()}-${randomUUID().slice(0, 8)}`; // Keep under 50 chars - Midtrans limit
+
+  // B4: order gratis (diskon 100%) — jangan panggil Midtrans (menolak
+  // gross_amount 0). Service menandai Subscription langsung ACTIVE tanpa Snap.
+  if (grossAmount === 0) {
+    return {
+      snapToken: null as string | null,
+      redirectUrl: undefined as string | undefined,
+      orderId,
+      price,
+      plan,
+      discountAmount,
+      voucherId,
+      voucherCode,
+      grossAmount,
+      isFree: true as const,
+    };
+  }
 
   const itemDetails: Array<{ id: string; name: string; price: number; quantity: number }> = [
     {
@@ -148,10 +168,11 @@ return {
      select: { email: true, username: true },
    });
 
-   if (!user) throw new AppError(404, "NOT_FOUND", "User tidak ditemukan");
+    if (!user) throw new AppError(404, "NOT_FOUND", "User tidak ditemukan");
 
-   const orderId = `STD-${Date.now()}`;
-   const priceSetting = await prisma.setting.findUnique({
+    // B7: suffix acak agar order_id unik (Midtrans menolak order_id duplikat).
+    const orderId = `STD-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const priceSetting = await prisma.setting.findUnique({
      where: { key: "standar_plan_price" },
    });
    const price = priceSetting ? parseInt(priceSetting.value, 10) : 500000;
@@ -173,11 +194,27 @@ return {
        voucherCode = v.voucher.code;
      }
    }
-   const grossAmount = Math.max(0, price - discountAmount);
+    const grossAmount = Math.max(0, price - discountAmount);
 
-   const itemDetails: Array<{ id: string; name: string; price: number; quantity: number }> = [
-     {
-       id: "standar-plan",
+    // B4: order gratis (diskon 100%) — jangan panggil Midtrans (menolak
+    // gross_amount 0). Service menandai Order langsung PAID + redeemable.
+    if (grossAmount === 0) {
+      return {
+        snapToken: null as string | null,
+        redirectUrl: undefined as string | undefined,
+        orderId,
+        price,
+        discountAmount,
+        voucherId,
+        voucherCode,
+        grossAmount,
+        isFree: true as const,
+      };
+    }
+
+    const itemDetails: Array<{ id: string; name: string; price: number; quantity: number }> = [
+      {
+        id: "standar-plan",
        name: "Lakuna Foto Standar Plan",
        price,
        quantity: 1,
@@ -209,13 +246,75 @@ return {
      },
    });
 
-   return {
-     snapToken: transaction.token,
-     redirectUrl: transaction.redirect_url,
-     orderId,
-     price,
-     discountAmount,
-     voucherId,
-     voucherCode,
-   };
- }
+    return {
+      snapToken: transaction.token,
+      redirectUrl: transaction.redirect_url,
+      orderId,
+      price,
+      discountAmount,
+      voucherId,
+      voucherCode,
+    };
+  }
+
+// ── pencatatan voucher saat settlement sukses (dipanggil dari webhook) ──
+// Snap create-time (createSubscriptionSnap / createStandarSnap) TIDAK bisa
+// mencatat redemption: baris Subscription / Order (target FK redemption)
+// belum ada saat token Midtrans dibuat. Fungsi di bawah ini adalah titik
+// sukses pemakaian — panggil dari webhook/polling setelah status PAID/ACTIVE,
+// bersamaan dengan increment usedCount (di dalam recordVoucherRedemption,
+// satu transaksi). Idempoten: cek existing (voucherId+subscriptionId/orderId)
+// di dalam transaksi sebelum create, lewati bila sudah ada.
+export async function recordSubscriptionVoucherOnPaid(
+  subscriptionId: string,
+): Promise<{ status: "RECORDED" | "ALREADY_RECORDED" | "NO_VOUCHER" }> {
+  const sub = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+  });
+  if (!sub) return { status: "NO_VOUCHER" };
+  const voucherId = sub.voucherId;
+  const amountCut = sub.discountAmount ?? 0;
+  if (!voucherId || amountCut <= 0) return { status: "NO_VOUCHER" };
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.voucherRedemption.findFirst({
+      where: { voucherId, subscriptionId: sub.id },
+    });
+    if (existing) return "ALREADY_RECORDED" as const;
+    await recordVoucherRedemption(tx, {
+      voucherId,
+      userId: sub.userId,
+      amountCut,
+      subscriptionId: sub.id,
+    });
+    return "RECORDED" as const;
+  });
+  return { status: result };
+}
+
+export async function recordStandarOrderVoucherOnPaid(
+  orderId: string,
+): Promise<{ status: "RECORDED" | "ALREADY_RECORDED" | "NO_VOUCHER" }> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+  if (!order) return { status: "NO_VOUCHER" };
+  const voucherId = order.voucherId;
+  const amountCut = order.discountAmount ?? 0;
+  if (!voucherId || amountCut <= 0) return { status: "NO_VOUCHER" };
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.voucherRedemption.findFirst({
+      where: { voucherId, orderId: order.id },
+    });
+    if (existing) return "ALREADY_RECORDED" as const;
+    await recordVoucherRedemption(tx, {
+      voucherId,
+      userId: order.userId,
+      amountCut,
+      orderId: order.id,
+    });
+    return "RECORDED" as const;
+  });
+  return { status: result };
+}

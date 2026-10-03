@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from "express";
-import { addFavoriteService, deleteFavoriteService, getFavoriteService } from "./favorite.service.js";
+import { addFavoriteService, deleteFavoriteService, deleteFavoriteByPhotoService, getFavoriteService } from "./favorite.service.js";
 import { AppError } from "../../middlewares/errorHandler.js";
 
 
@@ -71,7 +71,38 @@ export async function deleteFavoriteController(
         });
 
         res.json({
-            success: false,
+            success: true,
+            message: "Favorite telah di hapus",
+        });
+
+    } catch(err) {
+        next(err);
+    }
+}
+
+export async function deleteFavoriteByPhotoController(
+    req: Request,
+    res: Response,
+    next: NextFunction
+) {
+    try {
+        const { photoId } = req.params;
+
+        if (!photoId || Array.isArray(photoId)) {
+            throw new AppError(
+                404,
+                "INVALID_ID",
+                "Photo tidak di ketahui",
+            );
+        }
+
+        await deleteFavoriteByPhotoService({
+            userId: (req.user as { userId: string })!.userId,
+            photoId,
+        });
+
+        res.json({
+            success: true,
             message: "Favorite telah di hapus",
         });
 

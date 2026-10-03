@@ -5,6 +5,33 @@ import { prisma } from "../../config/db.js";
 
 const routerStats = Router();
 
+// GET /api/stats/public - Public homepage statistics (no auth)
+routerStats.get(
+    "/public",
+    async (_req: Request, res: Response, next: NextFunction) => {
+        try {
+            const [totalPhotos, totalVideos, totalPhotographers, totalCategories] = await Promise.all([
+                prisma.photo.count({ where: { deletedAt: null, type: "FOTO" } }),
+                prisma.photo.count({ where: { deletedAt: null, type: "VIDEO" } }),
+                prisma.photographer.count(),
+                prisma.category.count(),
+            ]);
+
+            res.json({
+                success: true,
+                data: {
+                    photos: totalPhotos,
+                    photographers: totalPhotographers,
+                    categories: totalCategories,
+                    videos: totalVideos,
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
 // GET /api/admin/stats - Dashboard statistics
 routerStats.get(
     "/stats",

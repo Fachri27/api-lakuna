@@ -2,9 +2,13 @@ import { z } from "zod";
 
 export const GetPhotosSchema = z.object({
   query: z.object({
-    search: z.string().optional(),
+    search: z.string().max(100, "Search maksimal 100 karakter").optional(),
     categoryId: z.string().optional(),
     type: z.enum(["FOTO", "VIDEO"]).optional(),
+    // Urutan hasil. Default terbaru; price_asc dipakai beranda untuk
+    // menampilkan harga termurah per tipe ("mulai dari") tanpa menarik
+    // seluruh arsip ke klien.
+    sort: z.enum(["newest", "price_asc", "price_desc"]).optional(),
     page: z.string().optional().default("1"),
     limit: z.string().optional().default("12"),
   }),
@@ -48,6 +52,18 @@ export const UploadPhotoSchema = z.object({
             .min(0, "Price minimal 0"),
 
         description: z.string().max(500, "Deskripsi maksimal 500 karakter").optional(),
+        location: z.string().max(200, "Lokasi maksimal 200 karakter").optional(),
+        // Penanda unggahan multi-berkas (satu judul, dikurasi terpisah).
+        batchId: z
+            .string()
+            .regex(/^[A-Za-z0-9-]{8,64}$/, "batchId tidak valid")
+            .optional(),
+        // Case-insensitive: "foto"/"FOTO" sama-sama diterima, selebihnya
+        // ditolak validate() (controller tidak lagi mem-parsing manual).
+        type: z.preprocess(
+            (v) => (typeof v === "string" ? v.toUpperCase() : v),
+            z.enum(["FOTO", "VIDEO"]),
+        ).optional(),
     }),
 });
 
@@ -61,11 +77,13 @@ export const UpdatePhotoSchema = z.object({
         title: z.string().min(1, "Judul wajib diisi").max(100, "Title maksimal 100 karakter").optional(),
         description: z.string().max(500, "Deskripsi maksimal 500 karakter").optional(),
         photographer: z.string().optional(),
+        location: z.string().max(200, "Lokasi maksimal 200 karakter").optional(),
         price: z.coerce
             .number()
             .int("Harga harus angka bulat")
             .positive("Harga harus positif")
             .optional(),
+        type: z.enum(["FOTO", "VIDEO"]).optional(),
     }),
 });
 

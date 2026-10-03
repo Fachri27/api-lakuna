@@ -1,5 +1,13 @@
 import PDFDocument from "pdfkit";
 import { uploadBuffer } from "./uploadToMinio.js";
+import {
+  getLicenseTemplate,
+  fetchTemplateBytes,
+  fillLicenseTemplate,
+  type FilledLicenseData,
+} from "./licenseTemplate.js";
+import { renderOverlayTemplate, photoAspect, type OverlayData } from "./licenseOverlay.js";
+import { loadLicensePhoto } from "./licensePhoto.js";
 
 export async function generateLicensePdf(license: {
   id: string;
@@ -10,7 +18,100 @@ export async function generateLicensePdf(license: {
   expiresAt?: Date | null;
   issuedTo?: string;
   orderId?: string | null;
+  /** Untuk template overlay (desain jadi): kolom Licensee & foto. */
+  userId?: string | undefined;
+  username?: string | undefined;
+  photoId?: string | undefined;
+  photoType?: string | undefined;
+  originalKey?: string | null | undefined;
 }): Promise<string> {
+  const formatDate = (date?: Date | null) => {
+    if (!date) return "-";
+    return new Intl.DateTimeFormat("id-ID", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    }).format(date);
+  };
+
+  const prettyType =
+    license.licenseType === "SUBSCRIBE" ? "Subscription" : "Standar";
+  const expiryText = license.expiresAt
+    ? `Sampai ${formatDate(license.expiresAt)}`
+    : "Tidak Terbatas";
+
+  // Template custom dari CMS (upload PDF + field AcroForm): isi otomatis,
+  // flatten, simpan seperti biasa. Gagal baca template → fallback desain bawaan.
+  const template = await getLicenseTemplate().catch(() => null);
+  if (template) {
+    try {
+      const templateBytes = await fetchTemplateBytes(template.objectKey);
+      if (template.mode === "overlay") {
+        const site = (process.env.PUBLIC_SITE_HOST || "lakunastock.com").replace(/^https?:\/\//, "").replace(/\/$/, "");
+        const isVideo = license.photoType === "VIDEO";
+        const data: OverlayData = {
+          licenseId: license.id,
+          licenseType: license.licenseType === "SUBSCRIBE" ? "Premium" : "Standard",
+          photoTitle: license.photoTitle,
+          photographer: license.photographer || "-",
+          issuedDate: new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(license.createdAt),
+          expiryText: license.expiresAt
+            ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(license.expiresAt)
+            : "Unlimited",
+          issuedTo: license.issuedTo || "-",
+          username: license.username || license.issuedTo || "-",
+          userId: license.userId || "-",
+          itemUrl: license.photoId ? `${site}/${isVideo ? "videos" : "photos"}/${license.photoId}` : site,
+          orderId: license.orderId || "-",
+        };
+        const aspect = photoAspect(template.layout);
+        const photo = aspect && license.originalKey
+          ? await loadLicensePhoto(license.originalKey, isVideo, aspect).catch(() => null)
+          : null;
+        const pdfBuffer = await renderOverlayTemplate(templateBytes, template.layout, data, photo);
+        const licenseKey = `license/license-${license.id}.pdf`;
+        await uploadBuffer(licenseKey, pdfBuffer, "application/pdf");
+        return licenseKey;
+      }
+      const data: FilledLicenseData = {
+        licenseId: license.id,
+        photoTitle: license.photoTitle,
+        photographer: license.photographer || "-",
+        licenseType: prettyType,
+        issuedTo: license.issuedTo || "-",
+        issuedDate: formatDate(license.createdAt),
+        expiryText,
+        orderId: license.orderId || "-",
+      };
+      const pdfBuffer = await fillLicenseTemplate(templateBytes, data);
+      const licenseKey = `license/license-${license.id}.pdf`;
+      await uploadBuffer(licenseKey, pdfBuffer, "application/pdf");
+      return licenseKey;
+    } catch (err) {
+      console.error("[LICENSE_TEMPLATE_FALLBACK]", err);
+    }
+  }
+
+  return generateBuiltinLicensePdf({ ...license, prettyType, expiryText, formatDate });
+}
+
+/** Desain bawaan (PDFKit) — dipakai bila admin belum upload template custom. */
+function generateBuiltinLicensePdf(
+  license: {
+    id: string;
+    photoTitle: string;
+    photographer: string;
+    licenseType: string;
+    createdAt: Date;
+    expiresAt?: Date | null;
+    issuedTo?: string;
+    orderId?: string | null;
+  } & {
+    prettyType: string;
+    expiryText: string;
+    formatDate: (date?: Date | null) => string;
+  },
+): Promise<string> {
   return new Promise(async (resolve, reject) => {
     const chunks: Buffer[] = [];
 
@@ -38,17 +139,7 @@ export async function generateLicensePdf(license: {
     });
     doc.on("error", reject);
 
-    const formatDate = (date?: Date | null) => {
-      if (!date) return "-";
-      return new Intl.DateTimeFormat("id-ID", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-      }).format(date);
-    };
-
-    const prettyType =
-      license.licenseType === "SUBSCRIBE" ? "Subscription" : "Standar";
+    const { formatDate, prettyType } = license;
 
     // ===== HEADER SECTION =====
     // Top decorative bar
@@ -158,10 +249,7 @@ export async function generateLicensePdf(license: {
     );
 
     // Row 4
-    const expiryText = license.expiresAt
-      ? `Sampai ${formatDate(license.expiresAt)}`
-      : "Tidak Terbatas";
-    drawInfoBox("MASA BERLAKU", expiryText, 50, infoY + 180);
+    drawInfoBox("MASA BERLAKU", license.expiryText, 50, infoY + 180);
     drawInfoBox("REFERENSI ORDER", license.orderId || "-", 295, infoY + 180);
 
     // ===== TERMS SECTION =====

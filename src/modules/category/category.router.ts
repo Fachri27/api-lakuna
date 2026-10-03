@@ -16,6 +16,7 @@ import {
 } from "./category.schema.js";
 import { authMiddleware } from "../../middlewares/auth.js";
 import { roleMiddleware } from "../../middlewares/role.js";
+import { upload } from "../../middlewares/upload.js";
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.post(
   "/",
   authMiddleware,
   roleMiddleware("ADMIN"),
+  upload.single("image"),
   validate(CreateCategorySchema),
   CreateCategoryController,
 );
@@ -39,6 +41,7 @@ router.patch(
   "/:id",
   authMiddleware,
   roleMiddleware("ADMIN"),
+  upload.single("image"),
   validate(UpdateCategorySchema),
   UpdateCategoryController,
 );

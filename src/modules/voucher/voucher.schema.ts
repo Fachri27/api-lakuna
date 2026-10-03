@@ -5,7 +5,7 @@ export const GetVouchersSchema = z.object({
   query: z.object({
     page: z.string().optional().default("1"),
     limit: z.string().optional().default("20"),
-    search: z.string().optional(),
+    search: z.string().max(100, "Search maksimal 100 karakter").optional(),
     scope: z.enum(["ORDER", "SUBSCRIPTION", "BOTH"]).optional(),
     isActive: z.enum(["true", "false"]).optional(),
   }),

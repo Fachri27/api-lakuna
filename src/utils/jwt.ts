@@ -41,10 +41,11 @@ export function verifyAccessToken(
 ) {
     return jwt.verify(
         token, 
-        JWT_SECRET
+        JWT_SECRET,
+        { algorithms: ['HS256'] }
     );
 }
 
 export function verifyRefreshToken(token: string) {
-    return jwt.verify(token, JWT_REFRESH_SECRET);
+    return jwt.verify(token, JWT_REFRESH_SECRET, { algorithms: ['HS256'] });
 }

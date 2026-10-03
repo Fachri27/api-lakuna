@@ -5,9 +5,24 @@ import {
   createVoucherService,
   updateVoucherService,
   deleteVoucherService,
+  getActiveVoucherService,
 } from "./voucher.service.js";
 import { validateVoucher } from "../discount/discount.service.js";
 import { getAuthUser } from "../../utils/auth.js";
+
+// GET /vouchers/active (publik)
+export async function GetActiveVoucherController(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const voucher = await getActiveVoucherService();
+    return res.json({ success: true, data: voucher });
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /vouchers
 export async function GetVouchersController(

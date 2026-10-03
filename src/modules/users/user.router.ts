@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { authMiddleware } from "../../middlewares/auth.js";
 import { validate } from "../../middlewares/validate.js";
 import { updateUserSchema } from "./user.schema.js";
@@ -92,6 +92,22 @@ import { roleMiddleware } from "../../middlewares/role.js";
 
 const routerUser = Router();
 
+// Guard: tolak admin yang mengubah role dirinya sendiri (anti self-demote/lockout)
+function rejectSelfRoleChange(req: Request, res: Response, next: NextFunction) {
+  const targetId = req.params.id as string;
+  const actorId = req.user?.userId;
+  if (actorId && targetId === actorId) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        code: "CANNOT_CHANGE_OWN_ROLE",
+        message: "Tidak dapat mengubah role sendiri",
+      },
+    });
+  }
+  next();
+}
+
 routerUser.patch(
   "/me",
   authMiddleware,
@@ -114,6 +130,7 @@ routerUser.patch(
   "/:id/role",
   authMiddleware,
   roleMiddleware("ADMIN"),
+  rejectSelfRoleChange,
   updateUserRoleController,
 );
 

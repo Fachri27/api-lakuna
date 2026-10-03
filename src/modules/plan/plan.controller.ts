@@ -25,9 +25,9 @@ export async function createPlanController(
   next: NextFunction,
 ) {
   try {
-    const { quota, priceMonthly, priceAnnual } = req.body;
+    const { name, badge, description, quota, priceMonthly, priceAnnual, highlight } = req.body;
 
-    const plan = await createPlanService({ quota, priceMonthly, priceAnnual });
+    const plan = await createPlanService({ name, badge, description, quota, priceMonthly, priceAnnual, highlight });
     return res.status(201).json({
       success: true,
       message: "Plan berhasil dibuat",
@@ -45,12 +45,16 @@ export async function updatePlanController(
 ) {
   try {
     const id = req.params.id as string;
-    const { quota, priceMonthly, priceAnnual, isActive } = req.body;
+    const { name, badge, description, quota, priceMonthly, priceAnnual, highlight, isActive } = req.body;
 
     const plan = await updatePlanService(id, {
+      name,
+      badge,
+      description,
       quota,
       priceMonthly,
       priceAnnual,
+      highlight,
       isActive,
     });
 

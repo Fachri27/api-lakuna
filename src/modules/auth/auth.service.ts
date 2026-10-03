@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { AppError } from "../../middlewares/errorHandler.js";
 import { prisma } from "../../config/db.js";
 import { signAccessToken, signRefreshToken, verifyAccessToken } from "../../utils/jwt.js";
@@ -131,8 +132,31 @@ export async function loginService(
 export async function logoutService(
     accessToken: string
 ) {
-    // verify access token
-    const payload = verifyAccessToken(accessToken) as { userId: string };
+    // verify access token — token kedaluwarsa tetap logout (hapus refresh + blacklist), tidak 500
+    let payload: { userId: string };
+    try {
+        payload = verifyAccessToken(accessToken) as { userId: string };
+    } catch (err: any) {
+        if (err?.name === "TokenExpiredError") {
+            const decoded = jwt.decode(accessToken) as { userId?: string } | null;
+            if (decoded?.userId) {
+                // hapus refresh token
+                await redisClient.del(
+                    `refreshToken:${decoded.userId}`,
+                );
+
+                // blacklist access token kedaluwarsa (best-effort)
+                await redisClient.set(
+                    `blacklist:${accessToken}`,
+                    "true",
+                    "EX",
+                    60 * 15
+                );
+            }
+            return true;
+        }
+        throw err;
+    }
 
     // hapus refresh token
     await redisClient.del(

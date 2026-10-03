@@ -11,12 +11,16 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { uploadBuffer } from "../../utils/uploadToMinio.js";
 import { getPresignedUrl } from "../../config/minio.js";
+import { INDONESIA_PLACES } from "../../utils/indonesiaPlaces.js";
+import { makeThumb, makePreviewImage, makePreviewVideo, makeClipVideo, clipKeyFor, grabVideoFrame } from "./publicAssets.js";
 
 type PhotoInput = {
   file: Express.Multer.File;
   watermark?: Express.Multer.File;
   title: string;
   description?: string;
+  location?: string;
+  batchId?: string;
   userId: string;
   role: string;
   photographer: string;
@@ -28,9 +32,11 @@ type PhotoInput = {
 type UpdatePhotoInput = {
   id: string;
   title?: string;
-  description?: string;
+  description?: string | null;
+  location?: string | null;
   photographer?: string;
   price?: number | string;
+  type?: "FOTO" | "VIDEO";
   file?: Express.Multer.File;
   watermark?: Express.Multer.File;
 };
@@ -55,6 +61,8 @@ async function buildPhotoAssets(
   fileBuffer: Buffer,
   mimeType?: string,
   watermarkFile?: Express.Multer.File,
+  /** ID foto untuk pita kredit "lakunastock · ID" di aset publik. */
+  photoId?: string,
 ) {
    const filename = crypto.randomUUID();
    const isVideo = mimeType?.startsWith("video/") ?? false;
@@ -63,37 +71,31 @@ async function buildPhotoAssets(
      const tempDir = mkdtempSync(join(tmpdir(), "lakuna-"));
      const ext = mimeType === "video/mp4" ? ".mp4" : mimeType === "video/webm" ? ".webm" : ".mov";
      const videoPath = join(tempDir, `input${ext}`);
-     const thumbPath = join(tempDir, "thumb.jpg");
      const h264Path = join(tempDir, "h264.mp4");
 
      writeFileSync(videoPath, fileBuffer);
 
-     try {
-       // Generate thumbnail
-       execSync(
-         `ffmpeg -i "${videoPath}" -ss 00:00:01 -vframes 1 -vf "scale=400:-1" -q:v 2 "${thumbPath}" -y`,
-         { stdio: "pipe" }
-       );
-       console.log("[FFMPEG] Thumbnail generated:", thumbPath);
+     // Aset publik (lihat publicAssets.ts): thumbnail dari frame detik ke-1
+     // dan pratinjau mp4 — keduanya kecil & ber-watermark. File asli hanya
+     // untuk /api/downloads berlisensi.
+     const framePath = join(tempDir, "frame.jpg");
+     let thumbBuffer: Buffer;
+     if (grabVideoFrame(videoPath, framePath)) {
+       thumbBuffer = await makeThumb(readFileSync(framePath), photoId);
+       try { unlinkSync(framePath); } catch {}
+     } else {
+       thumbBuffer = await sharp({
+         create: { width: 480, height: 270, channels: 3, background: { r: 30, g: 30, b: 30 } },
+       }).jpeg({ quality: 70 }).toBuffer();
+     }
+     await makePreviewVideo(videoPath, h264Path);
+     // Klip kartu bersih (tanpa watermark) untuk hover di grid.
+     const clipPath = join(tempDir, "clip.mp4");
+     makeClipVideo(videoPath, clipPath);
 
-       // Re-encode to H.264 MP4 for browser compatibility
-       execSync(
-         `ffmpeg -i "${videoPath}" -c:v libx264 -preset fast -crf 23 -c:a aac -movflags +faststart "${h264Path}" -y`,
-         { stdio: "pipe" }
-       );
-       console.log("[FFMPEG] H.264 video encoded:", h264Path);
-     } catch (err: any) {
-       console.error("[FFMPEG] Failed:", err?.stderr?.toString() || err.message);
-      const placeholder = await sharp({
-        create: { width: 400, height: 300, channels: 3, background: { r: 30, g: 30, b: 30 } }
-      }).jpeg({ quality: 80 }).toBuffer();
-      writeFileSync(thumbPath, placeholder);
-    }
-
-    const thumbBuffer = readFileSync(thumbPath);
-
-    // Use H.264 encoded video if available, otherwise original
-    const h264Buffer = existsSync(h264Path) ? readFileSync(h264Path) : fileBuffer;
+    // Pratinjau publik ber-watermark. Bila ffmpeg gagal JANGAN pakai file
+    // asli sebagai cadangan (bocor) — pakai thumbnail sebagai poster saja.
+    const h264Buffer = existsSync(h264Path) ? readFileSync(h264Path) : null;
 
     // Upload original video
     const originalKey = `original/${filename}${ext}`;
@@ -102,12 +104,14 @@ async function buildPhotoAssets(
 
     await uploadBuffer(originalKey, fileBuffer, mimeType || "video/mp4");
     await uploadBuffer(thumbKey, thumbBuffer, "image/jpeg");
-    await uploadBuffer(watermarkKey, h264Buffer, "video/mp4");
+    if (h264Buffer) await uploadBuffer(watermarkKey, h264Buffer, "video/mp4");
+    const clipKey = clipKeyFor(watermarkKey);
+    if (clipKey && existsSync(clipPath)) await uploadBuffer(clipKey, readFileSync(clipPath), "video/mp4");
 
     // Cleanup temp files
     try { unlinkSync(videoPath); } catch {}
-    try { unlinkSync(thumbPath); } catch {}
     try { unlinkSync(h264Path); } catch {}
+    try { unlinkSync(clipPath); } catch {}
 
     return { width: null, height: null, format: "video", originalKey, thumbKey, watermarkKey };
   }
@@ -122,57 +126,15 @@ async function buildPhotoAssets(
     .jpeg({ quality: 90 })
     .toBuffer();
 
-  const thumbnailBuffer = await sharp(fileBuffer)
-    .resize({ width: 400 })
-    .jpeg({ quality: 80 })
-    .toBuffer();
-
-const watermarkBuffer = await sharp(fileBuffer)
-     .resize({ width: 1200 })
-     .composite([
-       {
-         input: Buffer.from(`
-             <svg viewBox="0 0 800 400" width="800" height="400">
-               <text
-                 x="400"
-                 y="200"
-                 font-family="Arial, sans-serif"
-                 font-size="120"
-                 fill="white"
-                 opacity="0.5"
-                 text-anchor="middle"
-               >
-                 LAKUNA
-               </text>
-             </svg>
-           `),
-         gravity: "center",
-       },
-     ])
-     .jpeg({ quality: 80 })
-     .toBuffer();
+  // Aset publik kecil & ber-watermark (lihat publicAssets.ts). Pratinjau
+  // 1000 px untuk halaman detail/lightbox, thumbnail 480 px untuk grid.
+  const watermarkBuffer = await makePreviewImage(fileBuffer, photoId);
+  const thumbnailBuffer = await makeThumb(fileBuffer, photoId);
 
   const originalKey = `original/${filename}.jpg`;
   const thumbKey = `thumb/${filename}.jpg`;
-
-  // Watermark: pakai file watermark custom (disimpan apa adanya) bila diupload;
-  // selain itu fallback ke composite teks "LAKUNA" otomatis.
-  let watermarkKey: string;
-  if (watermarkFile) {
-    const wmExt =
-      watermarkFile.mimetype === "image/png"
-        ? ".png"
-        : watermarkFile.mimetype === "image/webp"
-          ? ".webp"
-          : watermarkFile.mimetype === "image/gif"
-            ? ".gif"
-            : ".jpg";
-    watermarkKey = `watermark/${filename}${wmExt}`;
-    await uploadBuffer(watermarkKey, watermarkFile.buffer, watermarkFile.mimetype);
-  } else {
-    watermarkKey = `watermark/${filename}.jpg`;
-    await uploadBuffer(watermarkKey, watermarkBuffer, "image/jpeg");
-  }
+  const watermarkKey = `watermark/${filename}.jpg`;
+  await uploadBuffer(watermarkKey, watermarkBuffer, "image/jpeg");
 
   await uploadBuffer(originalKey, originalBuffer, "image/jpeg");
   await uploadBuffer(thumbKey, thumbnailBuffer, "image/jpeg");
@@ -180,12 +142,75 @@ const watermarkBuffer = await sharp(fileBuffer)
   return { width, height, format, originalKey, thumbKey, watermarkKey };
 }
 
+/**
+ * Petakan satu baris Photo Prisma (dengan relasi categories/keywords) menjadi
+ * shape publik yang dikembalikan API: tambah thumbUrl/watermarkUrl/originalUrl
+ * (presigned, fallback picsum) + tags (gabungan category+keyword, max 5).
+ * Dipakai getPhotoService, getPhotosByIdsService, resolve homepage, dan
+ * daftar pending admin (pratinjau watermark untuk kurasi).
+ */
+export async function mapPhotoRow(photo: any) {
+  let thumbUrl = null;
+  let watermarkUrl = null;
+  // Klip kartu bersih (video saja); null = belum dibuat → kartu memakai pratinjau.
+  let clipUrl: string | null = null;
+
+  // TIDAK ada originalUrl di respons publik: file asli hanya lewat
+  // /api/downloads (cek lisensi/langganan). Dulu URL presigned file asli
+  // ikut terkirim ke siapa pun — terbaca dari tab Network.
+  try {
+    if (photo.thumbKey) thumbUrl = await getPresignedUrl(photo.thumbKey);
+    if (photo.watermarkKey) watermarkUrl = await getPresignedUrl(photo.watermarkKey);
+  } catch {
+    console.error("Failed to generate presigned URLs for photo:", photo.id);
+  }
+  if (photo.type === "VIDEO") {
+    const clipKey = clipKeyFor(photo.watermarkKey);
+    if (clipKey) clipUrl = await getPresignedUrl(clipKey).catch(() => null);
+  }
+
+  const categories = photo.photoCategories?.map((pc: any) => pc?.category?.name).filter(Boolean) || [];
+  const keywords = photo.photoKeywords?.map((pk: any) => pk?.keyword?.name).filter(Boolean) || [];
+  const allTags = [...categories, ...keywords];
+  const tags = [...new Set(allTags)].slice(0, 5);
+
+  const { originalKey: _omitOriginalKey, ...pub } = photo;
+  return {
+    ...pub,
+    tags,
+    thumbUrl: thumbUrl || `https://picsum.photos/seed/${photo.id}/400/300`,
+    watermarkUrl: watermarkUrl || `https://picsum.photos/seed/${photo.id}/800/600`,
+    originalUrl: null,
+    clipUrl,
+  };
+}
+
+/**
+ * Ambil beberapa foto sekaligus berdasarkan daftar id (hanya APPROVED & tidak
+ * terhapus), diurutkan sesuai urutan id yang diminta. Dipakai homepage untuk
+ * resolve photoIds → objek foto. Bila id tidak ditemukan, dilewati.
+ */
+export async function getPhotosByIdsService(ids: string[]) {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (!unique.length) return [];
+  const photos = await prisma.photo.findMany({
+    where: { id: { in: unique }, deletedAt: null, status: "APPROVED" },
+    include: {
+      photoCategories: { select: { category: { select: { name: true } } } },
+      photoKeywords: { select: { keyword: { select: { name: true } } } },
+    },
+  });
+  const byId = new Map(photos.map((p) => [p.id, p]));
+  const ordered = unique.map((id) => byId.get(id)).filter(Boolean) as any[];
+  return Promise.all(ordered.map((p) => mapPhotoRow(p)));
+}
+
 export async function getPhotoService(query: GetPhotosInput) {
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 12;
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
   const skip = (page - 1) * limit;
 
-  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${page}:${limit}`;
+  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${query.type || "any"}:${query.sort || "newest"}:${page}:${limit}`;
 
   // Clear old cache (disable cache for now)
   await redisClient.del(cacheKey).catch(() => {});
@@ -268,53 +293,19 @@ export async function getPhotoService(query: GetPhotosInput) {
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy:
+        query.sort === "price_asc"
+          ? { price: "asc" }
+          : query.sort === "price_desc"
+            ? { price: "desc" }
+            : { createdAt: "desc" },
       skip,
       take: limit,
     }),
     prisma.photo.count({ where }),
   ]);
 
-    const formattedPhotos = await Promise.all(
-      photos.map(async (photo) => {
-        let thumbUrl = null;
-        let watermarkUrl = null;
-        let originalUrl = null;
-
-        try {
-          if (photo.thumbKey) thumbUrl = await getPresignedUrl(photo.thumbKey);
-          if (photo.watermarkKey)
-            watermarkUrl = await getPresignedUrl(photo.watermarkKey);
-          if (photo.originalKey)
-            originalUrl = await getPresignedUrl(photo.originalKey);
-        } catch (urlErr) {
-          console.error(
-            "Failed to generate presigned URLs for photo:",
-            photo.id,
-          );
-        }
-
-        // Gabungkan categories dan keywords sebagai tags
-        const categories = photo.photoCategories?.map((pc) => pc?.category?.name).filter(Boolean) || [];
-        const keywords = photo.photoKeywords?.map((pk) => pk?.keyword?.name).filter(Boolean) || [];
-        
-        // Deduplicate dan batasi maksimal 5 tags
-        const allTags = [...categories, ...keywords];
-        const tags = [...new Set(allTags)].slice(0, 5);
-
-        return {
-          ...photo,
-          tags, // Tambahkan tags
-          thumbUrl:
-            thumbUrl || `https://picsum.photos/seed/${photo.id}/400/300`,
-          watermarkUrl:
-            watermarkUrl || `https://picsum.photos/seed/${photo.id}/800/600`,
-          originalUrl,
-        };
-      }),
-    );
+    const formattedPhotos = await Promise.all(photos.map((p) => mapPhotoRow(p)));
 
     const result = {
       data: formattedPhotos,
@@ -367,10 +358,24 @@ export async function getPhotoByIdService(id: string) {
         status: "APPROVED",
       },
       include: {
+        // id WAJIB ikut — Dashboard edit page (apps/cms) memetakan pk.keyword.id
+        // ke selectedKeywords. Tanpa id, semua key jadi undefined → React warning
+        // "Each child in a list should have a unique key prop" di KeywordInput.
+        photoCategories: {
+          select: {
+            category: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
         photoKeywords: {
           select: {
             keyword: {
               select: {
+                id: true,
                 name: true,
               },
             },
@@ -447,7 +452,7 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
   }
 
   if (file) {
-    const assets = await buildPhotoAssets(file.buffer, file.mimetype, watermark);
+    const assets = await buildPhotoAssets(file.buffer, file.mimetype, watermark, existingPhoto.id);
     updateData.originalKey = assets.originalKey;
     updateData.thumbKey = assets.thumbKey;
     updateData.watermarkKey = assets.watermarkKey;
@@ -455,19 +460,14 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
     updateData.height = assets.height;
     updateData.format = assets.format;
   } else if (watermark) {
-    // Hanya ganti watermark tanpa re-upload foto.
-    const wmFilename = crypto.randomUUID();
-    const wmExt =
-      watermark.mimetype === "image/png"
-        ? ".png"
-        : watermark.mimetype === "image/webp"
-          ? ".webp"
-          : watermark.mimetype === "image/gif"
-            ? ".gif"
-            : ".jpg";
-    const watermarkKey = `watermark/${wmFilename}${wmExt}`;
-    await uploadBuffer(watermarkKey, watermark.buffer, watermark.mimetype);
-    updateData.watermarkKey = watermarkKey;
+    // Watermark sekarang selalu di-generate dari logo bundel (tile + skew) di
+    // buildPhotoAssets, jadi upload watermark terpisah tanpa re-upload foto
+    // tidak lagi berdampak. Abaikan field ini; watermark hanya berubah bila
+    // foto di-upload ulang lewat `file`.
+    console.warn(
+      "[photo] update dengan field `watermark` tanpa `file` diabaikan — " +
+        "watermark di-generate otomatis dari logo bundel.",
+    );
   }
 
   // 2. Update di database
@@ -491,6 +491,46 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
 }
 
 // service untuk GET /photos/:id/related
+/**
+ * Saran lokasi untuk form unggah: gabungan lokasi yang sudah dipakai di foto
+ * APPROVED (terurut populer) + referensi geografi Indonesia statis
+ * (utils/indonesiaPlaces.ts). Tanpa q → terpopuler dulu; dengan q → yang
+ * cocok dulu (DB didahulukan). Publik, ringan, tanpa auth.
+ */
+export async function getPhotoLocationsService(
+  limit = 100,
+  q?: string,
+): Promise<string[]> {
+  const query = (q ?? "").trim().toLowerCase();
+  const cap = Math.max(1, Math.min(300, limit));
+
+  const rows = await prisma.photo.groupBy({
+    by: ["location"],
+    where: {
+      deletedAt: null,
+      status: "APPROVED",
+      location: { not: null },
+      ...(query ? { location: { contains: query } } : {}),
+    },
+    _count: { location: true },
+    orderBy: { _count: { location: "desc" } },
+    take: cap,
+  });
+  const dbNames = rows
+    .map((r) => (r.location ?? "").trim())
+    .filter((loc) => loc.length > 0);
+  const seen = new Set(dbNames.map((n) => n.toLowerCase()));
+
+  // Pelengkap statis: yang cocok q (atau semua bila tanpa q), belum ada di DB.
+  const staticNames = INDONESIA_PLACES.filter((name) => {
+    if (seen.has(name.toLowerCase())) return false;
+    return !query || name.toLowerCase().includes(query);
+  });
+
+  return [...dbNames, ...staticNames].slice(0, cap);
+}
+
+
 export async function getPhotoByRelatedService(id: string) {
   // ambil photo dan keyword
   const photo = await prisma.photo.findFirst({
@@ -564,21 +604,28 @@ export async function getPhotoByRelatedService(id: string) {
 // service upload
 export async function uploadPhotoService(data: PhotoInput) {
   const parsedPrice = parsePrice(data.price);
+  // ID dibuat di sini (bukan default DB) supaya pita kredit aset publik
+  // memuat ID yang sama dengan baris foto.
+  const photoId = crypto.randomUUID();
   const assets = await buildPhotoAssets(
     data.file.buffer,
     data.file.mimetype,
     data.watermark,
+    photoId,
   );
 
   const status = data.role === "CONTRIBUTOR" ? "PENDING" : "APPROVED";
 
   // upload ke db
   const createData: Prisma.PhotoCreateInput = {
+    id: photoId,
     title: data.title,
 
     description: data.description ?? null,
 
     photographer: data.photographer,
+    location: data.location ?? null,
+    batchId: data.batchId ?? null,
     type: data.type,
     status,
 
@@ -602,10 +649,15 @@ export async function uploadPhotoService(data: PhotoInput) {
     data: createData,
   });
 
-  const keys = await redisClient.keys("v4:photos:*");
-
-  if (keys.length > 0) {
-    await redisClient.del(keys);
+  // Invalidate cache best-effort: bila Redis error, foto tetap berhasil
+  // di-create; jangan biarkan error di sini mengembalikan HTTP error ke client.
+  try {
+    const keys = await redisClient.keys("v4:photos:*");
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
+  } catch (err) {
+    console.error("[photo] cache invalidation failed after create, ignoring:", err);
   }
 
   return photo;
@@ -660,6 +712,7 @@ export async function deletePhotoService(data: {
 export async function addPhotoKeywordsService(
   photoId: string,
   keywordIds: string[],
+  ownerId?: string,
 ) {
   // Cek photo exists
   const photo = await prisma.photo.findUnique({
@@ -668,6 +721,11 @@ export async function addPhotoKeywordsService(
 
   if (!photo) {
     throw new AppError(404, "PHOTO_NOT_FOUND", "Foto tidak ditemukan");
+  }
+
+  // Kontributor hanya boleh menandai karyanya sendiri; admin bebas.
+  if (ownerId && photo.userId !== ownerId) {
+    throw new AppError(403, "FORBIDDEN", "Bukan karya milikmu");
   }
 
   // Cek semua keywords exists
@@ -748,6 +806,7 @@ export async function removePhotoKeywordService(
 export async function addPhotoCategoriesService(
   photoId: string,
   categoryIds: string[],
+  ownerId?: string,
 ) {
   // Cek photo exists
   const photo = await prisma.photo.findUnique({
@@ -756,6 +815,11 @@ export async function addPhotoCategoriesService(
 
   if (!photo) {
     throw new AppError(404, "PHOTO_NOT_FOUND", "Foto tidak ditemukan");
+  }
+
+  // Kontributor hanya boleh menandai karyanya sendiri; admin bebas.
+  if (ownerId && photo.userId !== ownerId) {
+    throw new AppError(403, "FORBIDDEN", "Bukan karya milikmu");
   }
 
   // Cek categories exists

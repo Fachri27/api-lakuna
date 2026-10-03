@@ -9,9 +9,13 @@ export async function getAllPlansService() {
 }
 
 export async function createPlanService(data: {
+  name: string;
+  badge?: string;
+  description?: string;
   quota: number;
   priceMonthly: number;
   priceAnnual: number;
+  highlight?: boolean;
 }) {
   const existing = await prisma.plan.findFirst({
     where: { quota: data.quota, isActive: true },
@@ -27,9 +31,13 @@ export async function createPlanService(data: {
 export async function updatePlanService(
   id: string,
   data: {
+    name?: string;
+    badge?: string;
+    description?: string;
     quota?: number;
     priceMonthly?: number;
     priceAnnual?: number;
+    highlight?: boolean;
     isActive?: boolean;
   },
 ) {

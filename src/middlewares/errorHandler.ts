@@ -1,4 +1,9 @@
 import { NextFunction, Request, Response } from "express";
+import { UPLOAD_MAX_MB } from "../config/upload.js";
+
+function formatMb(mb: number) {
+  return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
 
 export class AppError extends Error {
   constructor(
@@ -45,6 +50,16 @@ export function errorHandler(
   if (err.name === "MulterError") {
     const multerErr = err as any;
     const isUnexpectedField = multerErr.code === "LIMIT_UNEXPECTED_FILE";
+
+    if (multerErr.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        success: false,
+        error: {
+          code: "FILE_TOO_LARGE",
+          message: `Ukuran file melebihi batas ${formatMb(UPLOAD_MAX_MB)}. Kompres atau potong file, lalu upload lagi.`,
+        },
+      });
+    }
 
     return res.status(400).json({
       success: false,

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middlewares/auth.js";
 import { roleMiddleware } from "../../middlewares/role.js";
+import { validate } from "../../middlewares/validate.js";
+import { CreatePlanSchema, UpdatePlanSchema } from "./plan.schema.js";
 import {
   createPlanController,
   getAllPlansController,
@@ -14,8 +16,8 @@ const routerPlan = Router();
 routerPlan.get("/", getAllPlansController);
 
 // Admin only
-routerPlan.post("/", authMiddleware, roleMiddleware("ADMIN"), createPlanController);
-routerPlan.patch("/:id", authMiddleware, roleMiddleware("ADMIN"), updatePlanController);
+routerPlan.post("/", authMiddleware, roleMiddleware("ADMIN"), validate(CreatePlanSchema), createPlanController);
+routerPlan.patch("/:id", authMiddleware, roleMiddleware("ADMIN"), validate(UpdatePlanSchema), updatePlanController);
 routerPlan.delete("/:id", authMiddleware, roleMiddleware("ADMIN"), deletePlanController);
 
 export default routerPlan;

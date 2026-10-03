@@ -70,7 +70,9 @@ export async function createSubscriptionController(
       voucherId,
     });
 
-    return res.status(201).json({ success: true, data });
+    // payOrderId = order_id Midtrans (SUB-…/STD-…) untuk halaman bayar custom
+    // /payment/pay/<payOrderId>. `data.orderId` (Standar) adalah UUID order.
+    return res.status(201).json({ success: true, data: data ? { ...data, payOrderId: orderId } : data });
   } catch (err) {
     next(err);
   }
@@ -219,7 +221,9 @@ export async function createStandarPurchaseController(
       voucherId,
     });
 
-    return res.status(201).json({ success: true, data });
+    // payOrderId = order_id Midtrans (SUB-…/STD-…) untuk halaman bayar custom
+    // /payment/pay/<payOrderId>. `data.orderId` (Standar) adalah UUID order.
+    return res.status(201).json({ success: true, data: data ? { ...data, payOrderId: orderId } : data });
   } catch (err) {
     next(err);
   }

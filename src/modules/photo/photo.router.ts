@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { GetPhotoController, GetPhotoByIdController, GetPhotoByRelatedController, createPhotoController, updatePhotoController, deletePhotoController, addPhotoKeywordController, removePhotoKeywordController, addPhotoCategoryController, removePhotoCategoryController, approvePhotoController, rejectPhotoController, getMyPhotosController, getPendingPhotosController } from "./photo.controller.js";
+import { GetPhotoController, GetPhotoByIdController, GetPhotoByRelatedController, createPhotoController, updatePhotoController, deletePhotoController, addPhotoKeywordController, removePhotoKeywordController, addPhotoCategoryController, removePhotoCategoryController, approvePhotoController, rejectPhotoController, getMyPhotosController, getPendingPhotosController, getPhotoViewController, getPhotoLocationsController } from "./photo.controller.js";
 import { validate } from "../../middlewares/validate.js";
 import { GetPhotosSchema, GetPhotoByIdSchema, GetPhotoByRelated, UpdatePhotoSchema, UploadPhotoSchema, AddPhotoKeywordSchema, RemovePhotoKeywordSchema, AddPhotoCategorySchema, RemovePhotoCategorySchema } from "./photo.schema.js";
 import { authMiddleware } from "../../middlewares/auth.js";
@@ -55,6 +55,13 @@ routerPhoto.get(
     getPendingPhotosController,
 )
 
+// Daftar lokasi unik (datalist form unggah). Publik, tanpa auth.
+// Must be before /:id to avoid route conflict
+routerPhoto.get(
+    "/locations",
+    getPhotoLocationsController,
+)
+
 /**
  * @swagger
  * /api/photos/{id}:
@@ -95,6 +102,14 @@ routerPhoto.get(
     "/:id",
     validate(GetPhotoByIdSchema),
     GetPhotoByIdController,
+);
+
+// URL file asli satu foto untuk viewer layar penuh (lightbox peta). Sengaja
+// per-foto & on-demand: daftar publik tetap tanpa originalUrl.
+routerPhoto.get(
+    "/:id/view",
+    validate(GetPhotoByIdSchema),
+    getPhotoViewController,
 );
 
 routerPhoto.get(
@@ -218,7 +233,7 @@ routerPhoto.delete(
 routerPhoto.post(
     "/:id/keywords",
     authMiddleware,
-    roleMiddleware("ADMIN"),
+    roleMiddleware("ADMIN", "CONTRIBUTOR"),
     validate(AddPhotoKeywordSchema),
     addPhotoKeywordController,
 );
@@ -294,7 +309,7 @@ routerPhoto.delete(
 routerPhoto.post(
     "/:id/categories",
     authMiddleware,
-    roleMiddleware("ADMIN"),
+    roleMiddleware("ADMIN", "CONTRIBUTOR"),
     validate(AddPhotoCategorySchema),
     addPhotoCategoryController,
 );

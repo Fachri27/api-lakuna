@@ -6,6 +6,7 @@ import {
   UpdateVoucherController,
   DeleteVoucherController,
   ValidateVoucherController,
+  GetActiveVoucherController,
 } from "./voucher.controller.js";
 import { validate } from "../../middlewares/validate.js";
 import {
@@ -20,6 +21,9 @@ import { authMiddleware } from "../../middlewares/auth.js";
 import { roleMiddleware } from "../../middlewares/role.js";
 
 const routerVoucher = Router();
+
+// GET /vouchers/active (publik — tanpa auth)
+routerVoucher.get("/active", GetActiveVoucherController);
 
 // GET /vouchers - list
 routerVoucher.get("/", authMiddleware, roleMiddleware("ADMIN"), validate(GetVouchersSchema), GetVouchersController);

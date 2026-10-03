@@ -3,6 +3,7 @@ import {
   getPhotoService,
   getPhotoByIdService,
   getPhotoByRelatedService,
+  getPhotoLocationsService,
   uploadPhotoService,
   updatePhotoService,
   deletePhotoService,
@@ -10,10 +11,13 @@ import {
   removePhotoKeywordService,
   addPhotoCategoriesService,
   removePhotoCategoryService,
+  mapPhotoRow,
 } from "./photo.service.js";
 import { AppError } from "../../middlewares/errorHandler.js";
 import { getAuthUser } from "../../utils/auth.js";
+import { getPagination } from "../../utils/paginate.js";
 import { prisma } from "../../config/db.js";
+import { getPresignedUrl } from "../../config/minio.js";
 
 export async function GetPhotoController(
   req: Request,
@@ -112,38 +116,27 @@ export async function createPhotoController(
 
     const userId = getAuthUser(req).userId;
 
-    const normalizedBody = Object.fromEntries(
-      Object.entries(req.body ?? {}).map(([key, value]) => [
-        key.trim().toLowerCase(),
-        value,
-      ]),
-    ) as Record<string, unknown>;
-    const resolvedPrice =
-      normalizedBody.price ??
-      normalizedBody.harga ??
-      normalizedBody.amount ??
-      normalizedBody["price[]"];
+    // req.body sudah lewat validate(UploadPhotoSchema): pakai hasil validasi
+    // (title/photographer/price/description/location/type sudah dalam batas
+    // max schema). Tidak ada lagi parsing manual String()/resolvedPrice.
+    const { title, photographer, price, description, location, type, batchId } =
+      req.body as {
+        title: string;
+        photographer: string;
+        price: number;
+        description?: string;
+        location?: string;
+        type?: "FOTO" | "VIDEO";
+        batchId?: string;
+      };
 
-    if (
-      resolvedPrice === undefined ||
-      resolvedPrice === null ||
-      resolvedPrice === ""
-    ) {
-      throw new AppError(
-        400,
-        "PRICE_REQUIRED",
-        `Field price wajib diisi (key yang diterima: ${
-          Object.keys(normalizedBody).join(", ") || "-"
-        })`,
-      );
+    if (price === undefined || price === null || Number.isNaN(price)) {
+      throw new AppError(400, "PRICE_REQUIRED", "Field price wajib diisi");
     }
 
     // Auto-detect type based on mimetype
     const isVideo = photoFile.mimetype.startsWith("video/");
     const detectedType = isVideo ? "VIDEO" : "FOTO";
-
-    // Use type from body if provided, otherwise use detected type
-    const typeFromBody = normalizedBody.type as "FOTO" | "VIDEO";
 
     // Kirim data ke service
     const user = getAuthUser(req);
@@ -157,23 +150,33 @@ export async function createPhotoController(
       file: Express.Multer.File;
       watermark?: Express.Multer.File;
       description?: string;
+      location?: string;
+      batchId?: string;
       type: "FOTO" | "VIDEO";
     } = {
-      title: String(normalizedBody.title ?? ""),
-      photographer: String(normalizedBody.photographer ?? ""),
-      price: resolvedPrice as string | number,
+      title,
+      photographer,
+      price,
       userId,
       role: user.role,
       file: photoFile,
-      type: typeFromBody || detectedType,
+      type: type ?? detectedType,
     };
 
     if (watermarkFile) {
       uploadPayload.watermark = watermarkFile;
     }
 
-    if (normalizedBody.description !== undefined) {
-      uploadPayload.description = String(normalizedBody.description);
+    if (description !== undefined) {
+      uploadPayload.description = description;
+    }
+
+    if (location !== undefined) {
+      uploadPayload.location = location;
+    }
+
+    if (batchId) {
+      uploadPayload.batchId = batchId;
     }
 
     const photo = await uploadPhotoService(uploadPayload);
@@ -201,18 +204,14 @@ export async function updatePhotoController(
       throw new AppError(400, "INVALID_ID", "ID foto tidak valid");
     }
 
-    const normalizedBody = Object.fromEntries(
-      Object.entries(req.body ?? {}).map(([key, value]) => [
-        key.trim().toLowerCase(),
-        value,
-      ]),
-    ) as Record<string, unknown>;
-
-    const resolvedPrice =
-      normalizedBody.price ??
-      normalizedBody.harga ??
-      normalizedBody.amount ??
-      normalizedBody["price[]"];
+    const { title, description, location, photographer, price, type } = req.body as {
+      title?: string;
+      description?: string;
+      location?: string;
+      photographer?: string;
+      price?: number;
+      type?: "FOTO" | "VIDEO";
+    };
 
     const files = req.files as
       | { photo?: Express.Multer.File[]; watermark?: Express.Multer.File[] }
@@ -220,7 +219,16 @@ export async function updatePhotoController(
     const photoFile = files?.photo?.[0];
     const watermarkFile = files?.watermark?.[0];
 
-    if (Object.keys(normalizedBody).length === 0 && !photoFile && !watermarkFile) {
+    if (
+      title === undefined &&
+      description === undefined &&
+      location === undefined &&
+      photographer === undefined &&
+      price === undefined &&
+      type === undefined &&
+      !photoFile &&
+      !watermarkFile
+    ) {
       throw new AppError(
         400,
         "EMPTY_UPDATE",
@@ -231,24 +239,33 @@ export async function updatePhotoController(
     const updatePayload: {
       id: string;
       title?: string;
-      description?: string;
+      description?: string | null;
+      location?: string | null;
       photographer?: string;
       price?: string | number;
+      type?: "FOTO" | "VIDEO";
       file?: Express.Multer.File;
       watermark?: Express.Multer.File;
     } = { id };
 
-    if (normalizedBody.title !== undefined) {
-      updatePayload.title = String(normalizedBody.title);
+    if (title !== undefined) {
+      updatePayload.title = title;
     }
-    if (normalizedBody.description !== undefined) {
-      updatePayload.description = String(normalizedBody.description);
+    // String kosong = sengaja dikosongkan dari form → simpan sebagai null.
+    if (description !== undefined) {
+      updatePayload.description = description.trim() || null;
     }
-    if (normalizedBody.photographer !== undefined) {
-      updatePayload.photographer = String(normalizedBody.photographer);
+    if (location !== undefined) {
+      updatePayload.location = location.trim() || null;
     }
-    if (resolvedPrice !== undefined) {
-      updatePayload.price = resolvedPrice as string | number;
+    if (photographer !== undefined) {
+      updatePayload.photographer = photographer;
+    }
+    if (price !== undefined) {
+      updatePayload.price = price;
+    }
+    if (type !== undefined) {
+      updatePayload.type = type;
     }
     if (photoFile) {
       updatePayload.file = photoFile;
@@ -279,7 +296,7 @@ export async function approvePhotoController(
     const id = req.params.id as string;
     const photo = await prisma.photo.update({
       where: { id },
-      data: { status: "APPROVED" },
+      data: { status: "APPROVED", rejectNote: null },
     });
     return res.json({ success: true, data: photo, message: "Foto disetujui" });
   } catch (err) {
@@ -294,9 +311,12 @@ export async function rejectPhotoController(
 ) {
   try {
     const id = req.params.id as string;
+    // Catatan alasan (opsional, ≤500) — ditampilkan ke kontributor.
+    const rawNote = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    const note = rawNote ? rawNote.slice(0, 500) : null;
     const photo = await prisma.photo.update({
       where: { id },
-      data: { status: "REJECTED" },
+      data: { status: "REJECTED", rejectNote: note },
     });
     return res.json({ success: true, data: photo, message: "Foto ditolak" });
   } catch (err) {
@@ -310,12 +330,54 @@ export async function getPendingPhotosController(
   next: NextFunction,
 ) {
   try {
-    const photos = await prisma.photo.findMany({
-      where: { status: "PENDING", deletedAt: null },
-      include: { user: { select: { username: true, email: true } } },
-      orderBy: { createdAt: "desc" },
+    const pagination = getPagination(req.query as { page?: string; limit?: string });
+    const page = Number.isFinite(pagination.page) ? pagination.page : 1;
+    const limit = Number.isFinite(pagination.limit) ? pagination.limit : 20;
+    const skip = (page - 1) * limit;
+    const where = { status: "PENDING" as const, deletedAt: null };
+    const [photos, total] = await Promise.all([
+      prisma.photo.findMany({
+        where,
+        include: { user: { select: { username: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.photo.count({ where }),
+    ]);
+    return res.json({
+      success: true,
+      // Petakan seperti list publik (thumbUrl/watermarkUrl), lalu tambahkan
+      // originalUrl: kurator perlu menilai file asli resolusi penuh. Aman
+      // karena rute ini khusus ADMIN; respons publik tetap tanpa originalUrl.
+      data: await Promise.all(
+        photos.map(async (p) => ({
+          ...(await mapPhotoRow(p)),
+          originalUrl: p.originalKey ? await getPresignedUrl(p.originalKey).catch(() => null) : null,
+        })),
+      ),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
-    return res.json({ success: true, data: photos });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Controller untuk GET /photos/locations — daftar lokasi unik
+// (datalist form unggah). Publik, tanpa auth.
+export async function getPhotoLocationsController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const limit = Number(req.query.limit);
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
+    const data = await getPhotoLocationsService(
+      Number.isFinite(limit) ? limit : undefined,
+      q,
+    );
+    return res.json({ success: true, data });
   } catch (err) {
     next(err);
   }
@@ -328,11 +390,28 @@ export async function getMyPhotosController(
 ) {
   try {
     const userId = getAuthUser(req).userId;
-    const photos = await prisma.photo.findMany({
-      where: { userId, deletedAt: null },
-      orderBy: { createdAt: "desc" },
+    const pagination = getPagination(req.query as { page?: string; limit?: string });
+    const page = Number.isFinite(pagination.page) ? pagination.page : 1;
+    const limit = Number.isFinite(pagination.limit) ? pagination.limit : 20;
+    const skip = (page - 1) * limit;
+    const where = { userId, deletedAt: null };
+    const [photos, total] = await Promise.all([
+      prisma.photo.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.photo.count({ where }),
+    ]);
+    return res.json({
+      success: true,
+      // thumbUrl/watermarkUrl presigned seperti list publik (tanpa file asli).
+      // Dulu baris mentah dikirim: tak ada thumbUrl, frontend jatuh ke
+      // gambar acak picsum.
+      data: await Promise.all(photos.map((p) => mapPhotoRow(p))),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
-    return res.json({ success: true, data: photos });
   } catch (err) {
     next(err);
   }
@@ -380,7 +459,12 @@ export async function addPhotoKeywordController(
 
     const { keywordIds } = req.body;
 
-    const photoKeywords = await addPhotoKeywordsService(id, keywordIds);
+    const me = getAuthUser(req) as { userId: string; role?: string };
+    const photoKeywords = await addPhotoKeywordsService(
+      id,
+      keywordIds,
+      me.role === "ADMIN" ? undefined : me.userId,
+    );
 
     return res.json({
       success: true,
@@ -435,7 +519,12 @@ export async function addPhotoCategoryController(
 
     const { categoryIds } = req.body;
 
-    const photoCategories = await addPhotoCategoriesService(id, categoryIds);
+    const me = getAuthUser(req) as { userId: string; role?: string };
+    const photoCategories = await addPhotoCategoriesService(
+      id,
+      categoryIds,
+      me.role === "ADMIN" ? undefined : me.userId,
+    );
 
     return res.json({
       success: true,
@@ -470,6 +559,27 @@ export async function removePhotoCategoryController(
       success: true,
       message: "Category berhasil dihapus dari foto",
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/photos/:id/view — URL presigned file ASLI (tanpa watermark) untuk
+ * viewer layar penuh (foto) dan pemutar halaman detail (video). Hanya yang
+ * sudah APPROVED; berlaku 10 menit.
+ * Diminta satu per satu saat viewer dibuka, bukan ikut di respons daftar.
+ */
+export async function getPhotoViewController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const photo = await prisma.photo.findFirst({
+      where: { id: String(req.params.id), status: "APPROVED", deletedAt: null },
+      select: { originalKey: true },
+    });
+    if (!photo?.originalKey) throw new AppError(404, "NOT_FOUND", "Foto tidak ditemukan");
+    const url = await getPresignedUrl(photo.originalKey, 600);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.json({ success: true, data: { url } });
   } catch (err) {
     next(err);
   }

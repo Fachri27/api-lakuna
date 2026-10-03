@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middlewares/auth.js";
-import { addFavoriteController, deleteFavoriteController, getFavoriteController } from "./favorite.controller.js";
+import { addFavoriteController, deleteFavoriteController, deleteFavoriteByPhotoController, getFavoriteController } from "./favorite.controller.js";
 import { validate } from "../../middlewares/validate.js";
 import { addFavoriteSchema } from "./favorite.schema.js";
 
@@ -19,6 +19,12 @@ routerFavorite.post(
     authMiddleware,
     validate(addFavoriteSchema),
     addFavoriteController
+);
+
+routerFavorite.delete(
+    "/by-photo/:photoId",
+    authMiddleware,
+    deleteFavoriteByPhotoController
 );
 
 routerFavorite.delete(

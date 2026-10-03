@@ -99,7 +99,7 @@ routerKeyword.get(
 routerKeyword.post(
   "/",
   authMiddleware,
-  roleMiddleware("ADMIN"),
+  roleMiddleware("ADMIN", "CONTRIBUTOR"),
   validate(CreateKeywordSchema),
   CreateKeywordController,
 );

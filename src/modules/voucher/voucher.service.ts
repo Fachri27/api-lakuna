@@ -5,10 +5,32 @@ import {
   UpdateVoucherInput,
 } from "./voucher.schema.js";
 
+// GET /vouchers/active (publik — tidak butuh auth)
+export async function getActiveVoucherService() {
+  const now = new Date();
+  const voucher = await prisma.voucher.findFirst({
+    where: {
+      isActive: true,
+      startsAt: { lte: now },
+      endsAt: { gte: now },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      code: true,
+      description: true,
+      valueType: true,
+      value: true,
+      maxDiscount: true,
+      endsAt: true,
+    },
+  });
+  return voucher;
+}
+
 // GET /vouchers
 export async function getVouchersService(query: GetVouchersInput) {
-  const page = Number(query.page) || 1;
-  const limit = Number(query.limit) || 20;
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {};

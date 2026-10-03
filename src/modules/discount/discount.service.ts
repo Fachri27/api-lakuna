@@ -1,5 +1,6 @@
 import { prisma } from "../../config/db.js";
 import { Prisma } from "@prisma/client";
+import { AppError } from "../../middlewares/errorHandler.js";
 
 // ── tipe hasil kalkulasi ──
 export interface DiscountCandidate {
@@ -208,7 +209,16 @@ export async function recordVoucherRedemption(
     subscriptionId?: string;
   },
 ): Promise<void> {
-  // sudah ada redemption untuk transaksi ini?
+  // Wajib terikat ke satu transaksi (order atau subscription) agar
+  // idempotency check di bawah bermakna. Tanpa salah satunya, `where`
+  // hanya berisi voucherId dan bisa cocok dengan redemption milik
+  // transaksi lain sehingga pencatatan ter-skip secara keliru.
+  if (!ctx.orderId && !ctx.subscriptionId) {
+    throw new Error("recordVoucherRedemption membutuhkan orderId atau subscriptionId");
+  }
+
+  // sudah ada redemption untuk transaksi ini? (idempoten — aman dipanggil
+  // ulang oleh webhook/polling untuk transaksi yang sama)
   const existing = await tx.voucherRedemption.findFirst({
     where: {
       voucherId: ctx.voucherId,
@@ -231,6 +241,128 @@ export async function recordVoucherRedemption(
     where: { id: ctx.voucherId },
     data: { usedCount: { increment: 1 } },
   });
+}
+
+// ── klaim kuota voucher atomik (pentest tahap-2 fix) ──
+// Sebelumnya cek kuota bersifat read-then-write (TOCTOU): dua request
+// konkuren sama-sama lolos validateVoucher sebelum salah satu commit.
+// Sekarang, di dalam tx PEMANGGIL (tanpa network call Midtrans di tx yang
+// sama):
+// 1. klaim kuota total via updateMany bersyarat → row lock pada baris
+//    voucher menserialisasi semua klaim konkuren untuk voucher yang sama;
+// 2. hitung pemakaian per-user SETELAH lock, dengan locking read (FOR
+//    UPDATE) agar membaca versi ter-commit (bukan snapshot REPEATABLE READ
+//    yang bisa kedaluwarsa) → TOCTOU per-user tertutup;
+// 3. baru insert redemption row.
+// Bila kuota habis → AppError 400 bersih (bukan 500 mentah P2034).
+export async function claimVoucherQuota(
+  tx: Prisma.TransactionClient,
+  ctx: {
+    voucherId: string;
+    userId: string;
+    amountCut: number;
+    orderId?: string;
+    subscriptionId?: string;
+  },
+): Promise<void> {
+  if (!ctx.orderId && !ctx.subscriptionId) {
+    throw new Error("claimVoucherQuota membutuhkan orderId atau subscriptionId");
+  }
+
+  // idempoten untuk pemanggil ulang (webhook/polling) untuk transaksi yang sama
+  const existing = await tx.voucherRedemption.findFirst({
+    where: {
+      voucherId: ctx.voucherId,
+      ...(ctx.orderId ? { orderId: ctx.orderId } : {}),
+      ...(ctx.subscriptionId ? { subscriptionId: ctx.subscriptionId } : {}),
+    },
+  });
+  if (existing) return;
+
+  const voucher = await tx.voucher.findUnique({
+    where: { id: ctx.voucherId },
+  });
+  if (!voucher) {
+    throw new AppError(404, "VOUCHER_NOT_FOUND", "Voucher tidak ditemukan");
+  }
+
+  // 1) klaim kuota total atomik — kondisi di WHERE yang menolak, bukan cek
+  // baca-tulis. quotaTotal null = tak terbatas (tetap ambil lock untuk
+  // menserialisasi cek per-user di bawah).
+  const claimWhere: Prisma.VoucherWhereInput = {
+    id: ctx.voucherId,
+    isActive: true,
+  };
+  if (voucher.quotaTotal != null) {
+    claimWhere.usedCount = { lt: voucher.quotaTotal };
+  }
+  const claim = await tx.voucher.updateMany({
+    where: claimWhere,
+    data: { usedCount: { increment: 1 } },
+  });
+  if (claim.count === 0) {
+    throw new AppError(
+      400,
+      "VOUCHER_QUOTA_EXHAUSTED",
+      "Kuota voucher sudah habis",
+    );
+  }
+
+  // 2) per-user SETELAH lock. Locking read (FOR UPDATE) lewat raw query
+  // agar membaca commit terbaru — menserialisasi dengan klaim konkuren
+  // lain untuk voucher yang sama (mereka menunggu row lock yang sama).
+  const rows = await tx.$queryRaw<Array<{ cnt: number | bigint }>>`
+    SELECT COUNT(*) AS cnt FROM \`VoucherRedemption\`
+    WHERE voucherId = ${ctx.voucherId} AND userId = ${ctx.userId}
+    FOR UPDATE
+  `;
+  const usedByUser = Number(rows[0]?.cnt ?? 0);
+  if (usedByUser >= voucher.quotaPerUser) {
+    // throw → rollback tx pemanggil (increment ikut ter-rollback)
+    throw new AppError(
+      400,
+      "VOUCHER_USER_QUOTA_EXHAUSTED",
+      "Batas pemakaian voucher per-user tercapai",
+    );
+  }
+
+  // 3) redemption row
+  await tx.voucherRedemption.create({
+    data: {
+      voucherId: ctx.voucherId,
+      userId: ctx.userId,
+      amountCut: ctx.amountCut,
+      orderId: ctx.orderId ?? null,
+      subscriptionId: ctx.subscriptionId ?? null,
+    },
+  });
+}
+
+// ── pengembalian kuota voucher (pentest tahap-2 fix) ──
+// Dipanggil saat order/subscription batal/expire atau saat pembuatan token
+// Midtrans gagal (kompensasi): redemption row dihapus + usedCount
+// dikurangi, dalam tx PEMANGGIL. Tanpa ini, order PENDING yang tidak
+// pernah dibayar menguras kuota voucher permanen.
+export async function releaseVoucherQuota(
+  tx: Prisma.TransactionClient,
+  ctx: { orderId?: string; subscriptionId?: string },
+): Promise<boolean> {
+  if (!ctx.orderId && !ctx.subscriptionId) return false;
+  const redemption = await tx.voucherRedemption.findFirst({
+    where: {
+      ...(ctx.orderId ? { orderId: ctx.orderId } : {}),
+      ...(ctx.subscriptionId ? { subscriptionId: ctx.subscriptionId } : {}),
+    },
+  });
+  if (!redemption) return false;
+  await tx.voucherRedemption.delete({
+    where: { id: redemption.id },
+  });
+  await tx.voucher.update({
+    where: { id: redemption.voucherId },
+    data: { usedCount: { decrement: 1 } },
+  });
+  return true;
 }
 // Menerima optional voucherCode. Mengembalikan diskon final (ambil terbesar
 // antara voucher vs jumlah event per-item), sumber, dan rincian.

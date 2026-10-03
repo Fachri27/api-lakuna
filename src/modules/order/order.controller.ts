@@ -54,8 +54,8 @@ export async function getOrdersAdminController(
             throw new AppError(403, "FORBIDDEN", "Akses ditolak");
         }
 
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 20;
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
         
         const orders = await getOrdersAdminService(page, limit);
 

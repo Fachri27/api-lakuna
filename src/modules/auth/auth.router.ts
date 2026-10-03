@@ -2,7 +2,7 @@ import { Router } from "express";
 import { loginController, logoutController, refreshController, registerController } from "./auth.controller.js";
 import { LoginSchema, RefreshSchema, RegisterSchema } from "./auth.schema.js";
 import { validate } from "../../middlewares/validate.js";
-import { loginRateLimiter, registerRateLimiter } from "../../middlewares/rateLimit.js";
+import { loginRateLimiter, refreshRateLimiter, registerRateLimiter } from "../../middlewares/rateLimit.js";
 
 // Import Google controller
 import { googleAuthHandler } from "./google.controller.js";
@@ -25,6 +25,7 @@ routerAuth.post(
 
 routerAuth.post(
   "/refresh",
+  refreshRateLimiter,
   validate(RefreshSchema),
   refreshController,
 );
