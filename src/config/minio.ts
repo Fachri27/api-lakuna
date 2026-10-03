@@ -105,6 +105,8 @@ export async function initializeMinIOBucketCORS() {
   }
 }
 
+const missingLogged = new Set<string>();
+
 export async function getPresignedUrl(
   objectName: string,
   expirySeconds: number = 3600,
@@ -144,7 +146,18 @@ export async function getPresignedUrl(
     if (process.env.NODE_ENV !== "production") console.log(`✓ Generated presigned URL for: ${objectName}`);
     return finalUrl;
   } catch (error) {
-    console.error(`Failed to generate presigned URL for ${objectName}:`, error);
+    const code = (error as { code?: string })?.code;
+    if (code === "NotFound" || code === "NoSuchKey" || code === "NoSuchBucket") {
+      // Objek yatim (key ada di DB, file tak ada di storage): normal sesudah
+      // pindah storage. Satu baris per key, sekali saja — stack trace per
+      // request membanjiri log (Railway membuang >500 baris/detik).
+      if (missingLogged.size < 1000 && !missingLogged.has(objectName)) {
+        missingLogged.add(objectName);
+        console.warn(`[minio] ${code}: ${objectName}`);
+      }
+    } else {
+      console.error(`Failed to generate presigned URL for ${objectName}:`, error);
+    }
     throw error;
   }
 }

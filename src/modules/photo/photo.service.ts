@@ -14,6 +14,9 @@ import { getPresignedUrl } from "../../config/minio.js";
 import { INDONESIA_PLACES } from "../../utils/indonesiaPlaces.js";
 import { makeThumb, makePreviewImage, makePreviewVideo, makeClipVideo, clipKeyFor, grabVideoFrame } from "./publicAssets.js";
 
+// Foto yang sudah dilaporkan gagal membuat link (hindari banjir log tiap request).
+const presignFailedLogged = new Set<string>();
+
 type PhotoInput = {
   file: Express.Multer.File;
   watermark?: Express.Multer.File;
@@ -162,7 +165,11 @@ export async function mapPhotoRow(photo: any) {
     if (photo.thumbKey) thumbUrl = await getPresignedUrl(photo.thumbKey);
     if (photo.watermarkKey) watermarkUrl = await getPresignedUrl(photo.watermarkKey);
   } catch {
-    console.error("Failed to generate presigned URLs for photo:", photo.id);
+    // Penyebabnya sudah dicatat (sekali per key) oleh getPresignedUrl.
+    if (!presignFailedLogged.has(photo.id) && presignFailedLogged.size < 1000) {
+      presignFailedLogged.add(photo.id);
+      console.warn("Presigned URL gagal, memakai gambar contoh untuk foto:", photo.id);
+    }
   }
   if (photo.type === "VIDEO") {
     const clipKey = clipKeyFor(photo.watermarkKey);
