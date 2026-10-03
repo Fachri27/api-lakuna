@@ -28,3 +28,21 @@ export async function uploadBuffer(
 
     return objectName;
 }
+
+/**
+ * Unggah dari BERKAS di disk (stream) — untuk media besar (video hero) agar tak
+ * dimuat penuh ke memori. Satu percobaan ulang untuk socket basi, seperti
+ * uploadBuffer.
+ */
+export async function uploadFile(objectName: string, filePath: string, mimetype: string) {
+    const put = () => minioClient.fPutObject(BUCKET, objectName, filePath, { "Content-Type": mimetype });
+    try {
+        await put();
+    } catch (err) {
+        const msg = (err as Error)?.message ?? "";
+        const code = (err as { code?: string })?.code ?? "";
+        if (!/socket hang up/i.test(msg) && code !== "ECONNRESET" && code !== "EPIPE") throw err;
+        await put();
+    }
+    return objectName;
+}

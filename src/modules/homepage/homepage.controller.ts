@@ -1,3 +1,4 @@
+import { unlink } from "fs/promises";
 import type { NextFunction, Request, Response } from "express";
 import {
   getHomepageService,
@@ -73,5 +74,9 @@ export async function upsertHomepageSectionController(
     });
   } catch (err) {
     next(err);
+  } finally {
+    // Berkas unggahan sementara di disk (multer.diskStorage) — selalu dihapus.
+    const tmp = (req.file as Express.Multer.File | undefined)?.path;
+    if (tmp) unlink(tmp).catch(() => {});
   }
 }

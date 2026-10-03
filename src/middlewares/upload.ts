@@ -1,4 +1,6 @@
 import multer from "multer";
+import { tmpdir } from "os";
+import crypto from "crypto";
 import { AppError } from "./errorHandler.js";
 import { UPLOAD_MAX_MB } from "../config/upload.js";
 
@@ -90,10 +92,20 @@ export const upload = multer({
  * Khusus upload media homepage (field "image"): gambar + video (mp4/webm).
  * Service membatasi video hanya untuk section hero; section lain menolaknya.
  */
+/** Batas upload media homepage = batas video hero (500 MB). */
+export const HOMEPAGE_UPLOAD_MAX_BYTES = 500 * 1024 * 1024;
+
 export const homepageUpload = multer({
-  storage: multer.memoryStorage(),
+  // Ke DISK, bukan RAM: video hero hingga 500 MB tak boleh ditampung di memori
+  // (kontainer Railway dibatasi memori; proses dimatikan OOM-killer dan koneksi
+  // unggahan putus — "Failed to fetch" di CMS). Berkas sementara dihapus
+  // controller setelah selesai.
+  storage: multer.diskStorage({
+    destination: tmpdir(),
+    filename: (_req, _file, cb) => cb(null, `lakuna-up-${crypto.randomUUID()}`),
+  }),
   limits: {
-    fileSize: UPLOAD_MAX_MB * 1024 * 1024,
+    fileSize: HOMEPAGE_UPLOAD_MAX_BYTES,
   },
 
   fileFilter: (req, file, cb) => {

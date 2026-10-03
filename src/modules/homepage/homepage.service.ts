@@ -1,12 +1,13 @@
 import crypto from "crypto";
 import sharp from "sharp";
-import { execFileSync } from "child_process";
-import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { readFileSync, mkdtempSync, rmSync, openSync, readSync, closeSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { prisma } from "../../config/db.js";
 import { getPresignedUrl } from "../../config/minio.js";
-import { uploadBuffer } from "../../utils/uploadToMinio.js";
+import { uploadBuffer, uploadFile } from "../../utils/uploadToMinio.js";
 import { AppError } from "../../middlewares/errorHandler.js";
 import { getPhotosByIdsService } from "../photo/photo.service.js";
 
@@ -38,28 +39,64 @@ const HERO_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
  *  ke 1080p CRF 23, hero jadi burik di layar retina. */
 const HERO_VIDEO_COMPRESS_ABOVE = 80 * 1024 * 1024;
 
-/** Kompresi klip hero untuk latar web fullscreen. RESOLUSI ASLI dipertahankan
- *  (hanya diturunkan bila di atas 4K), kualitas tinggi (CRF 18, preset
- *  medium) — yang dikecilkan ukuran berkas, bukan ketajaman. Audio DIPERTAHANKAN (AAC 128k — hero kini punya tombol
- *  suara; tanpa jalur audio di sumber, `-map 0:a?` tak menambah apa pun),
- *  faststart agar langsung streaming. Throw bila ffmpeg gagal/lama. */
-function compressHeroVideo(buffer: Buffer): Buffer {
+const execFileAsync = promisify(execFile);
+
+/** Kompresi klip hero untuk latar web fullscreen. ASINKRON (tidak membekukan
+ *  server seperti execFileSync dulu) dan hemat memori: thread dibatasi — x264
+ *  tanpa batas membuka thread per inti MESIN lalu 4K membengkak sampai
+ *  dimatikan OOM-killer. Resolusi asli dipertahankan sampai 2560 px lebar
+ *  (QHD; di atas itu diturunkan — latar fullscreen tak butuh 4K, dan 4K-lah
+ *  yang meledakkan memori), CRF 20, audio dipertahankan (AAC 128k; tanpa jalur
+ *  audio `-map 0:a:0?` tak menambah apa pun), faststart agar langsung streaming.
+ *  Mengembalikan jalur keluaran + direktori sementara (dihapus pemanggil). */
+export async function compressHeroVideo(srcPath: string): Promise<{ outPath: string; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), "hero-"));
-  const src = join(dir, "src.mp4");
-  const out = join(dir, "hero.mp4");
+  const outPath = join(dir, "hero.mp4");
   try {
-    writeFileSync(src, buffer);
-    execFileSync(
+    await execFileAsync(
       "ffmpeg",
-      ["-y", "-v", "error", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale='min(iw,3840)':-2", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out],
-      { timeout: 600000 },
+      [
+        "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+        "-threads", "2", "-filter_threads", "1",
+        "-i", srcPath,
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-vf", "scale='min(iw,2560)':-2",
+        "-c:v", "libx264", "-preset", "veryfast",
+        "-x264-params", "threads=2:lookahead_threads=1:rc-lookahead=10:ref=2",
+        "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        outPath,
+      ],
+      { timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 },
     );
-    return readFileSync(out);
-  } finally {
-    try { unlinkSync(src); } catch { /* abaikan */ }
-    try { unlinkSync(out); } catch { /* abaikan */ }
+    return { outPath, dir };
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
   }
 }
+
+/** Baca `n` byte pertama berkas (tanpa memuat seluruhnya) — untuk cek magic bytes. */
+function readHead(file: Express.Multer.File, n: number): Buffer {
+  if (file.buffer) return file.buffer.subarray(0, n);
+  const fd = openSync(file.path, "r");
+  try {
+    const b = Buffer.alloc(n);
+    const read = readSync(fd, b, 0, n, 0);
+    return b.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Isi berkas sebagai Buffer — hanya untuk GAMBAR (kecil); video tak pernah lewat sini. */
+function fileBuf(file: Express.Multer.File): Buffer {
+  return file.buffer ?? readFileSync(file.path);
+}
+
+/** Batas gambar homepage (video punya batas sendiri, 500 MB). */
+const HOMEPAGE_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 
 function verifyVideoBuffer(buffer: Buffer, mime: "video/mp4" | "video/webm"): void {  if (mime === "video/mp4") {
     // ISO BMFF: 4 byte ukuran + "ftyp" di offset 4.
@@ -89,10 +126,13 @@ async function sanitizeImageUpload(file: Express.Multer.File): Promise<{
   if (!ALLOWED_IMAGE_MIMES.has(mime)) {
     throw new AppError(400, "INVALID_FILE_TYPE", "File harus gambar JPG, PNG, atau WebP");
   }
+  if (file.size > HOMEPAGE_IMAGE_MAX_BYTES) {
+    throw new AppError(400, "IMAGE_TOO_LARGE", "Gambar maksimal 50 MB");
+  }
 
   let format: string | undefined;
   try {
-    const metadata = await sharp(file.buffer).metadata();
+    const metadata = await sharp(fileBuf(file)).metadata();
     format = metadata.format?.toLowerCase();
   } catch {
     throw new AppError(
@@ -110,7 +150,7 @@ async function sanitizeImageUpload(file: Express.Multer.File): Promise<{
   }
 
   try {
-    const buffer = await sharp(file.buffer).jpeg({ quality: 90 }).toBuffer();
+    const buffer = await sharp(fileBuf(file)).jpeg({ quality: 90 }).toBuffer();
     return { buffer, mimetype: "image/jpeg", ext: "jpg" };
   } catch {
     throw new AppError(
@@ -275,26 +315,34 @@ export async function upsertHomepageSectionService(
       if (key !== "hero") {
         throw new AppError(400, "VIDEO_NOT_ALLOWED", "Video latar hanya didukung section hero");
       }
-      if (file.buffer.length > HERO_VIDEO_MAX_BYTES) {
+      if (file.size > HERO_VIDEO_MAX_BYTES) {
         throw new AppError(400, "VIDEO_TOO_LARGE", "Video hero maksimal 500 MB");
       }
-      verifyVideoBuffer(file.buffer, mime as "video/mp4" | "video/webm");
+      verifyVideoBuffer(readHead(file, 12), mime as "video/mp4" | "video/webm");
       // Kompresi otomatis bila besar: tanpa ini klip 4K ratusan MB tidak
-      // pernah selesai dimuat browser sebagai latar.
-      let videoBuffer = file.buffer;
+      // pernah selesai dimuat browser sebagai latar. Diunggah dari DISK.
+      let uploadPath = file.path;
       let videoMime = mime;
       let outExt = videoExt;
-      if (file.buffer.length > HERO_VIDEO_COMPRESS_ABOVE) {
-        try {
-          videoBuffer = compressHeroVideo(file.buffer);
-          videoMime = "video/mp4";
-          outExt = "mp4";
-        } catch {
-          throw new AppError(500, "VIDEO_COMPRESS_FAILED", "Video terlalu besar dan gagal dikompresi — kecilkan manual di bawah 25 MB");
+      let tmpDir: string | null = null;
+      try {
+        if (file.size > HERO_VIDEO_COMPRESS_ABOVE) {
+          try {
+            const c = await compressHeroVideo(file.path);
+            uploadPath = c.outPath;
+            tmpDir = c.dir;
+            videoMime = "video/mp4";
+            outExt = "mp4";
+          } catch (err) {
+            console.error("[homepage] kompresi video hero gagal:", (err as Error)?.message?.split("\n").slice(-3).join(" | "));
+            throw new AppError(500, "VIDEO_COMPRESS_FAILED", "Video terlalu besar dan gagal dikompresi — kecilkan manual di bawah 80 MB");
+          }
         }
+        imageKey = `cms/homepage/${key}-${crypto.randomUUID()}.${outExt}`;
+        await uploadFile(imageKey, uploadPath, videoMime);
+      } finally {
+        if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
       }
-      imageKey = `cms/homepage/${key}-${crypto.randomUUID()}.${outExt}`;
-      await uploadBuffer(imageKey, videoBuffer, videoMime);
       mediaType = "video";
     } else {
       const clean = await sanitizeImageUpload(file);
