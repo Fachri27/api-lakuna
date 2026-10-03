@@ -32,6 +32,24 @@ export const VIDEO_CRF = 30;
 
 const FFMPEG = process.env.FFMPEG_BIN || "ffmpeg";
 
+/**
+ * Opsi hemat memori untuk libx264. Tanpa -threads, x264 membuka satu thread per
+ * inti MESIN (di Railway: puluhan), padahal kontainer dibatasi memorinya —
+ * 1080p lalu membengkak sampai ffmpeg dimatikan OOM-killer (proses mati tanpa
+ * pesan error, log berhenti di "frame=0"). -loglevel error memangkas banjir
+ * banner/progress di log.
+ */
+const FFMPEG_LIGHT = "-hide_banner -loglevel error -nostats -threads 2 -filter_threads 1";
+const X264_LIGHT = "-x264-params threads=2:lookahead_threads=1:rc-lookahead=10:ref=2";
+
+/** Ekor stderr ffmpeg saja (bukan seluruh banner) untuk log. */
+function ffmpegTail(err: any): string {
+  const raw = err?.stderr?.toString() || err?.message || "";
+  const t = String(raw).trim().split("\n").slice(-6).join("\n");
+  const sig = err?.signal ? ` [signal ${err.signal}]` : "";
+  return (t || "(tanpa pesan — kemungkinan dimatikan OOM)") + sig;
+}
+
 /** Tinggi pita kredit relatif terhadap lebar gambar (800 px → 40 px). */
 export const CREDIT_RATIO = 0.05;
 export const CREDIT_BRAND = "lakunastock";
@@ -115,14 +133,14 @@ export async function makePreviewVideo(inputPath: string, outPath: string): Prom
   try {
     writeFileSync(wmPath, await buildTiledSkewedWatermarkOverlay(VIDEO_W, VIDEO_W * 2));
     execSync(
-      `"${FFMPEG}" -i "${inputPath}" -i "${wmPath}" ` +
+      `"${FFMPEG}" ${FFMPEG_LIGHT} -i "${inputPath}" -i "${wmPath}" ` +
         `-filter_complex "[0:v]scale=${VIDEO_W}:-2[v];[v][1:v]overlay=0:0" ` +
-        `-c:v libx264 -preset fast -crf ${VIDEO_CRF} -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
-      { stdio: "pipe" },
+        `-c:v libx264 -preset veryfast ${X264_LIGHT} -crf ${VIDEO_CRF} -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
+      { stdio: "pipe", timeout: 240_000 },
     );
     return true;
   } catch (err: any) {
-    console.error("[publicAssets] ffmpeg pratinjau video gagal:", err?.stderr?.toString() || err?.message);
+    console.error("[publicAssets] ffmpeg pratinjau video gagal:", ffmpegTail(err));
     return false;
   } finally {
     try { unlinkSync(wmPath); } catch {}
@@ -151,13 +169,13 @@ export function clipKeyFor(watermarkKey: string | null | undefined): string | nu
 export function makeClipVideo(input: string, outPath: string): boolean {
   try {
     execSync(
-      `"${FFMPEG}" -t ${CLIP_SECONDS} -i "${input}" ` +
-        `-c:v libx264 -preset fast -crf 24 -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
-      { stdio: "pipe" },
+      `"${FFMPEG}" ${FFMPEG_LIGHT} -t ${CLIP_SECONDS} -i "${input}" ` +
+        `-c:v libx264 -preset veryfast ${X264_LIGHT} -crf 24 -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
+      { stdio: "pipe", timeout: 240_000 },
     );
     return true;
   } catch (err: any) {
-    console.error("[publicAssets] ffmpeg klip kartu gagal:", err?.stderr?.toString() || err?.message);
+    console.error("[publicAssets] ffmpeg klip kartu gagal:", ffmpegTail(err));
     return false;
   }
 }
