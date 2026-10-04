@@ -164,7 +164,8 @@ async function sanitizeImageUpload(file: Express.Multer.File): Promise<{
 /** Bagian homepage yang dikelola CMS. arsip/video/harga = header + kurasi
  *  section landing (strip foto, contact sheet video, teaser langganan).
  *  banding = teks perbandingan pratinjau vs unduhan. percaya = eyebrow +
- *  logo pelanggan (kurasi foto). */
+ *  logo pelanggan (kurasi foto). etalase = teks + kurasi foto showcase
+ *  ekowisata di atas footer. */
 export const HOMEPAGE_SECTIONS = [
   "hero",
   "manifesto",
@@ -178,11 +179,12 @@ export const HOMEPAGE_SECTIONS = [
   "klip",
   "banding",
   "percaya",
+  "etalase",
 ] as const;
 export type HomepageSectionKey = (typeof HOMEPAGE_SECTIONS)[number];
 
 /** Section yang dikurasi sebagai daftar foto (bukan satu image + teks). */
-export const PHOTO_SECTION_KEYS = ["journeys", "orbit", "klip", "percaya"] as const;
+export const PHOTO_SECTION_KEYS = ["journeys", "orbit", "klip", "percaya", "etalase"] as const;
 type PhotoSectionKey = (typeof PHOTO_SECTION_KEYS)[number];
 function isPhotoSection(key: string): key is PhotoSectionKey {
   return (PHOTO_SECTION_KEYS as readonly string[]).includes(key);
@@ -198,9 +200,9 @@ export type HomepageSection = {
   title: string | null;
   body: string | null;
   cta: string | null;
-  /** id foto terpilih (hanya untuk section journeys/orbit). */
+  /** id foto terpilih (hanya untuk section journeys/orbit/etalase). */
   photoIds: string[] | null;
-  /** Objek foto yang sudah di-resolve (dengan thumbUrl) — hanya journeys/orbit. */
+  /** Objek foto yang sudah di-resolve (dengan thumbUrl) — hanya journeys/orbit/etalase. */
   photos: unknown[] | null;
   updatedAt: string | null;
 };
@@ -251,7 +253,7 @@ async function readSection(key: HomepageSectionKey): Promise<HomepageSection> {
   }
 
   const photoIds = stored.photoIds ?? null;
-  // Untuk section journeys/orbit, resolve id → objek foto (dengan thumbUrl).
+  // Untuk section journeys/orbit/etalase, resolve id → objek foto (dengan thumbUrl).
   const photos = isPhotoSection(key) && photoIds?.length ? await getPhotosByIdsService(photoIds) : null;
 
   return {
@@ -352,7 +354,7 @@ export async function upsertHomepageSectionService(
     }
   }
 
-  // photoIds hanya relevan untuk section journeys/orbit. Bila tidak dikirim
+  // photoIds hanya relevan untuk section journeys/orbit/etalase. Bila tidak dikirim
   // (undefined), pertahankan daftar lama; bila [] (array kosong), kosongkan.
   const nextPhotoIds =
     photoIds !== undefined ? Array.from(new Set(photoIds.filter(Boolean))) : stored.photoIds ?? null;

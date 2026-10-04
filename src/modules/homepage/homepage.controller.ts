@@ -43,7 +43,7 @@ export async function upsertHomepageSectionController(
     const file = req.file as Express.Multer.File | undefined;
     const body = (req.body ?? {}) as Record<string, string>;
     // photoIds dikirim sebagai string JSON (multipart) — array id foto terpilih
-    // untuk section journeys/orbit. Bila tidak ada, lewat undefined (pertahankan lama).
+    // untuk section journeys/orbit/etalase. Bila tidak ada, lewat undefined (pertahankan lama).
     let photoIds: string[] | undefined;
     if (typeof body.photoIds === "string" && body.photoIds.length > 0) {
       try {
