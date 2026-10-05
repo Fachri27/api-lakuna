@@ -20,6 +20,7 @@ export async function getDownloadService(userId: string, query?: { page?: string
           select: {
             id: true,
             title: true,
+            titleEn: true,
             thumbKey: true,
             watermarkKey: true,
             originalKey: true,

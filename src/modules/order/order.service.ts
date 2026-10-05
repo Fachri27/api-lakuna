@@ -25,6 +25,7 @@ export async function getOrdersService(userId: string) {
                         select: {
                             id: true,
                             title: true,
+                            titleEn: true,
                             thumbKey: true,
                         },
                     },

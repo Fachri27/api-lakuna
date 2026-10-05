@@ -28,6 +28,7 @@ export async function getFavoriteService(
                 select: {
                     id: true,
                     title: true,
+                    titleEn: true,
                     thumbKey: true,
                     price: true,
                     type: true,
@@ -129,6 +130,7 @@ export async function addFavoriteService(
                 select: {
                     id: true,
                     title: true,
+                    titleEn: true,
                     thumbKey: true,
                     price: true,
                     type: true,

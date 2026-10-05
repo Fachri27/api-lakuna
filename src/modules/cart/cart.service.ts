@@ -25,6 +25,7 @@ export async function getCartService(userId: string) {
         select: {
           id: true,
           title: true,
+          titleEn: true,
           thumbKey: true,
           price: true,
         },
@@ -113,6 +114,7 @@ export async function addToCartService(data: {
           select: {
             id: true,
             title: true,
+            titleEn: true,
             thumbKey: true,
             price: true,
           },
