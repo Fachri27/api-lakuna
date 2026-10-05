@@ -165,6 +165,12 @@ export function clipKeyFor(watermarkKey: string | null | undefined): string | nu
  * setajam berkasnya. Server yang tak kuat mengenkode 4K bisa memasang env CLIP_MAX_EDGE=1920.
  */
 export const CLIP_MAX_EDGE = Math.max(0, Number(process.env.CLIP_MAX_EDGE) || 0);
+/**
+ * Batas bitrate klip (bawaan 12 Mbps). Pada resolusi asli, CRF murni bisa menghasilkan 25-40 Mbps
+ * untuk 4K — klip 8 dtk jadi 25-40 MB dan pratinjau baru mulai berputar lama setelah di-hover.
+ * Dengan batas ini klip ≤ ±12 MB: tetap resolusi asli dan tajam, tapi mulai putar cepat.
+ */
+export const CLIP_MAXRATE = process.env.CLIP_MAXRATE || "12M";
 
 /**
  * Klip kartu: 8 detik pertama pada RESOLUSI ASLI (kecuali CLIP_MAX_EDGE diset), CRF 24, tanpa
@@ -182,7 +188,8 @@ export function makeClipVideo(input: string, outPath: string): boolean {
   try {
     execSync(
       `"${FFMPEG}" ${FFMPEG_LIGHT} -t ${CLIP_SECONDS} -i "${input}" ${vf}` +
-        `-c:v libx264 -preset veryfast ${X264_LIGHT} -crf 24 -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
+        `-c:v libx264 -preset veryfast ${X264_LIGHT} -crf 24 -maxrate ${CLIP_MAXRATE} -bufsize ${CLIP_MAXRATE.replace(/\d+/, (n) => String(Number(n) * 2))} ` +
+        `-pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
       { stdio: "pipe", timeout: 240_000 },
     );
     return true;
