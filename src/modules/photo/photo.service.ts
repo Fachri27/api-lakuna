@@ -222,7 +222,7 @@ export async function getPhotoService(query: GetPhotosInput) {
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
   const skip = (page - 1) * limit;
 
-  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${query.type || "any"}:${query.sort || "newest"}:${query.period || "all"}:${page}:${limit}`;
+  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${query.photographer || "-"}:${query.type || "any"}:${query.sort || "newest"}:${query.period || "all"}:${page}:${limit}`;
 
   // Clear old cache (disable cache for now)
   await redisClient.del(cacheKey).catch(() => {});
@@ -233,6 +233,11 @@ export async function getPhotoService(query: GetPhotosInput) {
 
   if (query.type) {
     where.type = query.type;
+  }
+
+  // Karya satu fotografer (tautan "oleh …" di halaman detail): nama persis, bukan pencarian.
+  if (query.photographer) {
+    where.photographer = query.photographer;
   }
 
   if (query.period) {
@@ -251,7 +256,8 @@ export async function getPhotoService(query: GetPhotosInput) {
       },
     };
   } else if (query.search) {
-    // Search in title, photographer, OR category name, OR keywords
+    // Pencarian = JUDUL (ID & EN) atau KEYWORD (ID & EN) — tidak lagi nama fotografer atau kategori
+    // (itu punya filter sendiri: `photographer` dan `categoryId`), supaya hasilnya tak tercampur.
     where.OR = [
       {
         title: {
@@ -261,22 +267,6 @@ export async function getPhotoService(query: GetPhotosInput) {
       {
         titleEn: {
           contains: query.search,
-        },
-      },
-      {
-        photographer: {
-          contains: query.search,
-        },
-      },
-      {
-        photoCategories: {
-          some: {
-            category: {
-              name: {
-                contains: query.search,
-              },
-            },
-          },
         },
       },
       {

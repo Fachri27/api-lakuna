@@ -3,6 +3,8 @@ import { z } from "zod";
 export const GetPhotosSchema = z.object({
   query: z.object({
     search: z.string().max(100, "Search maksimal 100 karakter").optional(),
+    // Saring karya satu fotografer (nama persis). Pencarian `search` hanya judul & keyword.
+    photographer: z.string().max(100, "Photographer maksimal 100 karakter").optional(),
     categoryId: z.string().optional(),
     type: z.enum(["FOTO", "VIDEO"]).optional(),
     // Urutan hasil. Default terbaru; price_asc dipakai beranda untuk

@@ -19,7 +19,7 @@ const routerPhoto = Router();
  *         name: search
  *         schema:
  *           type: string
- *         description: Search by title or photographer
+ *         description: Search by title or keyword (Indonesian and English). Photographer / category have their own filters (`photographer`, `categoryId`)
  *       - in: query
  *         name: page
  *         schema:
