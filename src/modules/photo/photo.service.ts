@@ -217,7 +217,7 @@ export async function getPhotoService(query: GetPhotosInput) {
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 12));
   const skip = (page - 1) * limit;
 
-  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${query.type || "any"}:${query.sort || "newest"}:${page}:${limit}`;
+  const cacheKey = `v4:photos:${query.search || query.categoryId || "all"}:${query.type || "any"}:${query.sort || "newest"}:${query.period || "all"}:${page}:${limit}`;
 
   // Clear old cache (disable cache for now)
   await redisClient.del(cacheKey).catch(() => {});
@@ -228,6 +228,12 @@ export async function getPhotoService(query: GetPhotosInput) {
 
   if (query.type) {
     where.type = query.type;
+  }
+
+  if (query.period) {
+    const DAY = 24 * 60 * 60 * 1000;
+    const span = { day: DAY, week: 7 * DAY, month: 30 * DAY, year: 365 * DAY }[query.period];
+    where.createdAt = { gte: new Date(Date.now() - span) };
   }
 
   // If category name provided, filter by exact category match only (via photoCategories)

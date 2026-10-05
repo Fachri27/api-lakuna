@@ -10,6 +10,8 @@ export const GetPhotosSchema = z.object({
     // seluruh arsip ke klien. popular = paling banyak diunduh, lalu paling
     // banyak difavoritkan, lalu terbaru (seri → terbaru).
     sort: z.enum(["newest", "oldest", "popular", "price_asc", "price_desc"]).optional(),
+    // Batas waktu unggah: hanya yang dibuat dalam 24 jam / 7 hari / 30 hari / 365 hari terakhir.
+    period: z.enum(["day", "week", "month", "year"]).optional(),
     page: z.string().optional().default("1"),
     limit: z.string().optional().default("12"),
   }),
