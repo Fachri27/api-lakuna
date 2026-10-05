@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed:media": "node --env-file=.env --import tsx/esm prisma/seeds/seed-media.ts",
+    "storage:clean": "node --env-file=.env.production --import tsx/esm scripts/storage-clean.ts",
     "storage:report": "node --env-file=.env.production --import tsx/esm scripts/storage-report.ts",
     "regen:clips": "node --env-file=.env.production --import tsx/esm scripts/regen-public-assets.ts --clips-only --broken-only",
     "seed:dummy": "node --env-file=.env --import tsx/esm prisma/seeds/seed-dummy.ts"
