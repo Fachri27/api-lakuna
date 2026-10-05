@@ -98,7 +98,7 @@ async function buildPhotoAssets(
      await makePreviewVideo(videoPath, h264Path);
      // Klip kartu bersih (tanpa watermark) untuk hover di grid.
      const clipPath = join(tempDir, "clip.mp4");
-     makeClipVideo(videoPath, clipPath);
+     const clipOk = makeClipVideo(videoPath, clipPath);
 
     // Pratinjau publik ber-watermark. Bila ffmpeg gagal JANGAN pakai file
     // asli sebagai cadangan (bocor) — pakai thumbnail sebagai poster saja.
@@ -113,7 +113,8 @@ async function buildPhotoAssets(
     await uploadBuffer(thumbKey, thumbBuffer, "image/jpeg");
     if (h264Buffer) await uploadBuffer(watermarkKey, h264Buffer, "video/mp4");
     const clipKey = clipKeyFor(watermarkKey);
-    if (clipKey && existsSync(clipPath)) await uploadBuffer(clipKey, readFileSync(clipPath), "video/mp4");
+    // Hanya klip yang SELESAI diunggah; yang gagal/terpotong dilewati → kartu memakai pratinjau ber-watermark.
+    if (clipKey && clipOk && existsSync(clipPath)) await uploadBuffer(clipKey, readFileSync(clipPath), "video/mp4");
 
     // Cleanup temp files
     try { unlinkSync(videoPath); } catch {}

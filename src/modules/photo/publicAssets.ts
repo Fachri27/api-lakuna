@@ -160,22 +160,37 @@ export function clipKeyFor(watermarkKey: string | null | undefined): string | nu
   return `clip/${watermarkKey.slice("watermark/".length).replace(/\.[^.]+$/, "")}.mp4`;
 }
 
+/** Sisi terpanjang klip kartu (px): 1080p. Kartu di grid paling lebar ±1000 px (retina). */
+export const CLIP_MAX_EDGE = 1920;
+
 /**
- * Klip kartu: 8 detik pertama pada RESOLUSI ASLI (tanpa diperkecil), CRF 24,
- * tanpa audio, tanpa watermark — kartu tampil setajam berkasnya. Pendek,
- * jadi tetap ringan dimuat saat hover.
+ * Klip kartu: 8 detik pertama, sisi terpanjang maksimal 1080p dan 30 fps, CRF 24,
+ * tanpa audio, tanpa watermark. Pendek dan kecil, jadi ringan dimuat & didekode saat hover.
+ *
+ * Dulu klip dienkode pada resolusi ASLI: video 4K menghasilkan klip 4K (±25 MB) dan,
+ * di server kecil, ffmpeg kehabisan waktu/memori di tengah jalan — berkas terpotong
+ * (tanpa "moov atom") tetap terunggah dan kartu tak bisa memutar pratinjau.
+ *
+ * Gagal = berkas keluaran DIHAPUS (jangan pernah mengunggah klip setengah jadi).
  * `input` boleh path lokal atau URL (ffmpeg hanya membaca awal berkas).
  */
 export function makeClipVideo(input: string, outPath: string): boolean {
+  const scale =
+    `scale='if(gt(iw,ih),min(${CLIP_MAX_EDGE},iw),-2)':'if(gt(iw,ih),-2,min(${CLIP_MAX_EDGE},ih))',fps=30`;
   try {
     execSync(
-      `"${FFMPEG}" ${FFMPEG_LIGHT} -t ${CLIP_SECONDS} -i "${input}" ` +
+      `"${FFMPEG}" ${FFMPEG_LIGHT} -t ${CLIP_SECONDS} -i "${input}" -vf "${scale}" ` +
         `-c:v libx264 -preset veryfast ${X264_LIGHT} -crf 24 -pix_fmt yuv420p -an -movflags +faststart "${outPath}" -y`,
       { stdio: "pipe", timeout: 240_000 },
     );
     return true;
   } catch (err: any) {
     console.error("[publicAssets] ffmpeg klip kartu gagal:", ffmpegTail(err));
+    try {
+      unlinkSync(outPath);
+    } catch {
+      /* belum sempat dibuat */
+    }
     return false;
   }
 }
