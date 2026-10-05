@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed:media": "node --env-file=.env --import tsx/esm prisma/seeds/seed-media.ts",
+    "regen:clips": "node --env-file=.env.production --import tsx/esm scripts/regen-public-assets.ts --clips-only --broken-only",
     "seed:dummy": "node --env-file=.env --import tsx/esm prisma/seeds/seed-dummy.ts"
   },
   "keywords": [],

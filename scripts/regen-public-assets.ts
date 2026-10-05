@@ -7,7 +7,14 @@
  *
  * Jalankan dari folder api (MinIO harus bisa dijangkau lewat MINIO_ENDPOINT):
  *   node --env-file=.env --import tsx/esm scripts/regen-public-assets.ts
+ * Perbaiki klip kartu video di PRODUKSI (tanpa menempel kredensial di baris perintah):
+ *   1. cp .env.production.example .env.production   (isi nilainya; berkas ini di-ignore Git)
+ *   2. npm run regen:clips -- --check               (hanya melaporkan klip yang rusak)
+ *   3. npm run regen:clips                          (membuat ulang HANYA klip yang rusak)
+ *
  * Opsi: --only=<photoId>[,<photoId>...] untuk item tertentu;
+ *       --broken-only (dengan --clips-only) lewati klip yang sehat, buat ulang yang rusak/tak ada;
+ *       --check       (dengan --broken-only) hanya melaporkan, tidak menulis apa pun;
  *       --thumbs-only hanya membuat ulang thumbnail kartu;
  *       --clips-only hanya membuat klip kartu video (tanpa watermark).
  */
@@ -28,6 +35,8 @@ const thumbsOnly = process.argv.includes("--thumbs-only");
 // --clips-only: hanya klip kartu video (8 dtk awal, tanpa watermark); ffmpeg
 // membaca langsung dari URL, video tidak diunduh utuh.
 const clipsOnly = process.argv.includes("--clips-only");
+const brokenOnly = process.argv.includes("--broken-only");
+const checkOnly = process.argv.includes("--check");
 
 /** Tampilkan target (TANPA kredensial) supaya jelas skrip ini menulis ke mana. */
 function describeTarget() {
@@ -40,7 +49,7 @@ function describeTarget() {
 		console.log("⚠  Database dan MinIO berbeda lingkungan (satu lokal, satu jarak jauh). Pastikan ini disengaja.");
 	}
 	if (isLocal(dbHost) && isLocal(String(process.env.MINIO_ENDPOINT))) {
-		console.log("⚠  Target LOKAL: ini TIDAK memperbaiki klip di produksi. Beri DATABASE_URL & MINIO_* produksi di baris perintah.");
+		console.log("⚠  Target LOKAL: ini TIDAK memperbaiki klip di produksi. Isi DATABASE_URL & MINIO_* produksi di .env.production, lalu jalankan: npm run regen:clips");
 	}
 }
 
@@ -71,11 +80,34 @@ async function main() {
 	});
 	console.log(`ditemukan ${photos.length} item`);
 	let ok = 0;
+	let skipped = 0;
 	for (const p of photos) {
 		try {
 			if (clipsOnly) {
 				const clipKey = clipKeyFor(p.watermarkKey);
 				if (p.type !== "VIDEO" || !clipKey) continue;
+				if (brokenOnly) {
+					// Klip sehat = bisa dibaca ffprobe lewat URL (MP4 valid, ada dimensi & durasi); selain itu dibuat ulang.
+					let healthy: string | null = null;
+					try {
+						const cu = await minioClient.presignedGetObject(BUCKET, clipKey, 600);
+						const o = execSync(
+							`"${process.env.FFPROBE_BIN || "ffprobe"}" -v error -select_streams v:0 -show_entries stream=width,height:format=duration -of csv=p=0:s=x "${cu}"`,
+							{ stdio: "pipe", timeout: 60_000 },
+						).toString().trim().split(/\s+/);
+						const [w, h] = (o[0] ?? "").split("x").map(Number);
+						if (w && h && Number(o[1]) > 1) healthy = `${w}x${h}`;
+					} catch { /* rusak / tidak ada */ }
+					if (healthy) {
+						skipped++;
+						console.log(`lewati  ${p.title} (klip sehat ${healthy})`);
+						continue;
+					}
+					if (checkOnly) {
+						console.log(`RUSAK   ${p.title}  [${p.id}]`);
+						continue;
+					}
+				}
 				const dir = mkdtempSync(join(tmpdir(), "regen-"));
 				const op = join(dir, "clip.mp4");
 				const url = await minioClient.presignedGetObject(BUCKET, p.originalKey, 3600);
@@ -153,7 +185,7 @@ async function main() {
 			console.error(`GAGAL ${p.id} ${p.title}:`, (e as Error).message);
 		}
 	}
-	console.log(`selesai: ${ok}/${photos.length}`);
+	console.log(`selesai: ${ok}/${photos.length}${skipped ? ` (dilewati ${skipped} klip sehat)` : ""}`);
 	await prisma.$disconnect();
 }
 
