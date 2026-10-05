@@ -19,7 +19,7 @@ export const UpdateSettingSchema = z.object({
     value: z.coerce
       .string()
       .min(1, "Value harus diisi")
-      .max(5000, "Value maksimal 5000 karakter"),
+      .max(60000, "Value maksimal 60000 karakter"), // kolom Setting.value = TEXT (65 KB); daftar foto peta bisa panjang
   }),
 });
 
