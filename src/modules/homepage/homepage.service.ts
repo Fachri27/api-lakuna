@@ -180,11 +180,13 @@ export const HOMEPAGE_SECTIONS = [
   "banding",
   "percaya",
   "etalase",
+  "koridor_kiri",
+  "koridor_kanan",
 ] as const;
 export type HomepageSectionKey = (typeof HOMEPAGE_SECTIONS)[number];
 
 /** Section yang dikurasi sebagai daftar foto (bukan satu image + teks). */
-export const PHOTO_SECTION_KEYS = ["journeys", "orbit", "klip", "percaya", "etalase"] as const;
+export const PHOTO_SECTION_KEYS = ["journeys", "orbit", "klip", "percaya", "etalase", "koridor_kiri", "koridor_kanan"] as const;
 type PhotoSectionKey = (typeof PHOTO_SECTION_KEYS)[number];
 function isPhotoSection(key: string): key is PhotoSectionKey {
   return (PHOTO_SECTION_KEYS as readonly string[]).includes(key);

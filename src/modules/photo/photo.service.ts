@@ -256,8 +256,7 @@ export async function getPhotoService(query: GetPhotosInput) {
       },
     };
   } else if (query.search) {
-    // Pencarian = JUDUL (ID & EN) atau KEYWORD (ID & EN) — tidak lagi nama fotografer atau kategori
-    // (itu punya filter sendiri: `photographer` dan `categoryId`), supaya hasilnya tak tercampur.
+    // Pencarian = JUDUL (ID & EN), NAMA FOTOGRAFER, atau KEYWORD (ID & EN).
     where.OR = [
       {
         title: {
@@ -266,6 +265,11 @@ export async function getPhotoService(query: GetPhotosInput) {
       },
       {
         titleEn: {
+          contains: query.search,
+        },
+      },
+      {
+        photographer: {
           contains: query.search,
         },
       },
