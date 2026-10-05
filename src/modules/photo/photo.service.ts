@@ -307,7 +307,9 @@ export async function getPhotoService(query: GetPhotosInput) {
             ? { price: "desc" }
             : query.sort === "oldest"
               ? { createdAt: "asc" }
-              : { createdAt: "desc" },
+              : query.sort === "popular"
+                ? [{ downloads: { _count: "desc" } }, { favorites: { _count: "desc" } }, { createdAt: "desc" }]
+                : { createdAt: "desc" },
       skip,
       take: limit,
     }),
