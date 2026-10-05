@@ -8,22 +8,17 @@ export async function getKeywordsService(query: GetKeywordsInput) {
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
   const skip = (page - 1) * limit;
 
-  const where = query.search
-    ? {
-        name: {
-          contains: query.search,
-        },
-      }
-    : {};
+  const where = {
+    ...(query.search ? { name: { contains: query.search } } : {}),
+    ...(query.lang ? { lang: query.lang } : {}),
+  };
 
   const [keywords, total] = await Promise.all([
     prisma.keyword.findMany({
       where,
       skip,
       take: limit,
-      orderBy: {
-        name: "asc",
-      },
+      orderBy: [{ lang: "asc" as const }, { name: "asc" as const }],
     }),
     prisma.keyword.count({ where }),
   ]);
@@ -55,7 +50,7 @@ export async function getKeywordByIdService(id: string) {
 // Create keyword
 export async function createKeywordService(data: CreateKeywordInput) {
   const existingKeyword = await prisma.keyword.findUnique({
-    where: { name: data.name },
+    where: { name_lang: { name: data.name, lang: data.lang } },
   });
 
   if (existingKeyword) {
@@ -65,6 +60,7 @@ export async function createKeywordService(data: CreateKeywordInput) {
   const keyword = await prisma.keyword.create({
     data: {
       name: data.name,
+      lang: data.lang,
     },
   });
 
@@ -74,7 +70,7 @@ export async function createKeywordService(data: CreateKeywordInput) {
 // Update keyword
 export async function updateKeywordService(
   id: string,
-  data: CreateKeywordInput,
+  data: { name: string },
 ) {
   const existingKeyword = await prisma.keyword.findUnique({
     where: { id },
@@ -86,8 +82,9 @@ export async function updateKeywordService(
 
   // Check if new name already exists (and it's not the same keyword)
   if (data.name !== existingKeyword.name) {
+    // Bahasa kata kunci tidak berubah lewat update; duplikat dicek dalam bahasa yang sama.
     const duplicateKeyword = await prisma.keyword.findUnique({
-      where: { name: data.name },
+      where: { name_lang: { name: data.name, lang: existingKeyword.lang } },
     });
 
     if (duplicateKeyword) {

@@ -22,6 +22,8 @@ type PhotoInput = {
   watermark?: Express.Multer.File;
   title: string;
   description?: string;
+  titleEn?: string;
+  descriptionEn?: string;
   location?: string;
   batchId?: string;
   userId: string;
@@ -36,6 +38,8 @@ type UpdatePhotoInput = {
   id: string;
   title?: string;
   description?: string | null;
+  titleEn?: string | null;
+  descriptionEn?: string | null;
   location?: string | null;
   photographer?: string;
   price?: number | string;
@@ -204,7 +208,7 @@ export async function getPhotosByIdsService(ids: string[]) {
     where: { id: { in: unique }, deletedAt: null, status: "APPROVED" },
     include: {
       photoCategories: { select: { category: { select: { name: true } } } },
-      photoKeywords: { select: { keyword: { select: { name: true } } } },
+      photoKeywords: { select: { keyword: { select: { name: true, lang: true } } } },
     },
   });
   const byId = new Map(photos.map((p) => [p.id, p]));
@@ -250,6 +254,11 @@ export async function getPhotoService(query: GetPhotosInput) {
     where.OR = [
       {
         title: {
+          contains: query.search,
+        },
+      },
+      {
+        titleEn: {
           contains: query.search,
         },
       },
@@ -301,6 +310,7 @@ export async function getPhotoService(query: GetPhotosInput) {
             keyword: {
               select: {
                 name: true,
+                lang: true,
               },
             },
           },
@@ -394,6 +404,7 @@ export async function getPhotoByIdService(id: string) {
               select: {
                 id: true,
                 name: true,
+                lang: true,
               },
             },
           },
@@ -602,6 +613,7 @@ export async function getPhotoByRelatedService(id: string) {
           keyword: {
             select: {
               name: true,
+              lang: true,
             },
           },
         },
@@ -644,6 +656,8 @@ export async function uploadPhotoService(data: PhotoInput) {
     title: data.title,
 
     description: data.description ?? null,
+    titleEn: data.titleEn ?? null,
+    descriptionEn: data.descriptionEn ?? null,
 
     photographer: data.photographer,
     location: data.location ?? null,

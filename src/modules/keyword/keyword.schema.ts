@@ -6,6 +6,8 @@ export const GetKeywordsSchema = z.object({
     page: z.string().optional().default("1"),
     limit: z.string().optional().default("20"),
     search: z.string().max(100, "Search maksimal 100 karakter").optional(),
+    // Saring per bahasa; kosong = semua.
+    lang: z.enum(["id", "en"]).optional(),
   }),
 });
 
@@ -26,6 +28,8 @@ export const CreateKeywordSchema = z.object({
       .min(1, "Nama keyword harus diisi")
       .max(100, "Nama keyword maksimal 100 karakter")
       .trim(),
+    // Bahasa kata kunci; default "id" (perilaku lama).
+    lang: z.enum(["id", "en"]).default("id"),
   }),
 });
 

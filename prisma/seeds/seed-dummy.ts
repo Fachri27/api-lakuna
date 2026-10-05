@@ -157,7 +157,7 @@ async function linkTaxonomy(photoId: string, categories: string[], keywords: str
     });
   }
   for (const name of new Set(keywords)) {
-    const k = await prisma.keyword.upsert({ where: { name }, update: {}, create: { name } });
+    const k = await prisma.keyword.upsert({ where: { name_lang: { name, lang: "id" } }, update: {}, create: { name, lang: "id" } });
     await prisma.photoKeyword.upsert({
       where: { photoId_keywordId: { photoId, keywordId: k.id } },
       update: {},

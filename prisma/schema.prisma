@@ -38,7 +38,10 @@ model User {
 model Photo {
   id              String          @id @default(uuid())
   title           String
-  description     String?
+  /// Judul/deskripsi versi Inggris. `title`/`description` = versi Indonesia (bahasa utama).
+  titleEn         String?
+  description     String?         @db.VarChar(500)
+  descriptionEn   String?         @db.VarChar(500)
   photographer    String?
   price           Int
   type            AssetType       @default(FOTO)
@@ -77,8 +80,12 @@ model Photo {
 
 model Keyword {
   id            String         @id @default(uuid())
-  name          String         @unique
+  name          String
+  /// Bahasa kata kunci: "id" | "en". Nama yang sama boleh ada di kedua bahasa.
+  lang          String         @default("id") @db.VarChar(2)
   photoKeywords PhotoKeyword[]
+
+  @@unique([name, lang])
 }
 
 model Category {

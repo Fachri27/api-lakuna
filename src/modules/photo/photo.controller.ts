@@ -119,12 +119,14 @@ export async function createPhotoController(
     // req.body sudah lewat validate(UploadPhotoSchema): pakai hasil validasi
     // (title/photographer/price/description/location/type sudah dalam batas
     // max schema). Tidak ada lagi parsing manual String()/resolvedPrice.
-    const { title, photographer, price, description, location, type, batchId } =
+    const { title, photographer, price, description, titleEn, descriptionEn, location, type, batchId } =
       req.body as {
         title: string;
         photographer: string;
         price: number;
         description?: string;
+        titleEn?: string;
+        descriptionEn?: string;
         location?: string;
         type?: "FOTO" | "VIDEO";
         batchId?: string;
@@ -150,6 +152,8 @@ export async function createPhotoController(
       file: Express.Multer.File;
       watermark?: Express.Multer.File;
       description?: string;
+      titleEn?: string;
+      descriptionEn?: string;
       location?: string;
       batchId?: string;
       type: "FOTO" | "VIDEO";
@@ -170,6 +174,9 @@ export async function createPhotoController(
     if (description !== undefined) {
       uploadPayload.description = description;
     }
+    // Versi Inggris: kosong/spasi saja = tidak diisi.
+    if (titleEn?.trim()) uploadPayload.titleEn = titleEn.trim();
+    if (descriptionEn?.trim()) uploadPayload.descriptionEn = descriptionEn.trim();
 
     if (location !== undefined) {
       uploadPayload.location = location;
@@ -204,9 +211,11 @@ export async function updatePhotoController(
       throw new AppError(400, "INVALID_ID", "ID foto tidak valid");
     }
 
-    const { title, description, location, photographer, price, type } = req.body as {
+    const { title, description, titleEn, descriptionEn, location, photographer, price, type } = req.body as {
       title?: string;
       description?: string;
+      titleEn?: string;
+      descriptionEn?: string;
       location?: string;
       photographer?: string;
       price?: number;
@@ -222,6 +231,8 @@ export async function updatePhotoController(
     if (
       title === undefined &&
       description === undefined &&
+      titleEn === undefined &&
+      descriptionEn === undefined &&
       location === undefined &&
       photographer === undefined &&
       price === undefined &&
@@ -240,6 +251,8 @@ export async function updatePhotoController(
       id: string;
       title?: string;
       description?: string | null;
+      titleEn?: string | null;
+      descriptionEn?: string | null;
       location?: string | null;
       photographer?: string;
       price?: string | number;
@@ -254,6 +267,13 @@ export async function updatePhotoController(
     // String kosong = sengaja dikosongkan dari form → simpan sebagai null.
     if (description !== undefined) {
       updatePayload.description = description.trim() || null;
+    }
+    // Versi Inggris dikosongkan dari form → null (situs kembali memakai versi Indonesia).
+    if (titleEn !== undefined) {
+      updatePayload.titleEn = titleEn.trim() || null;
+    }
+    if (descriptionEn !== undefined) {
+      updatePayload.descriptionEn = descriptionEn.trim() || null;
     }
     if (location !== undefined) {
       updatePayload.location = location.trim() || null;

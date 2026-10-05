@@ -55,6 +55,9 @@ export const UploadPhotoSchema = z.object({
             .min(0, "Price minimal 0"),
 
         description: z.string().max(500, "Deskripsi maksimal 500 karakter").optional(),
+        // Versi Inggris (opsional): judul & deskripsi; kosong = situs memakai versi Indonesia.
+        titleEn: z.string().max(100, "Title (EN) maksimal 100 karakter").optional(),
+        descriptionEn: z.string().max(500, "Deskripsi (EN) maksimal 500 karakter").optional(),
         location: z.string().max(200, "Lokasi maksimal 200 karakter").optional(),
         // Penanda unggahan multi-berkas (satu judul, dikurasi terpisah).
         batchId: z
@@ -79,6 +82,8 @@ export const UpdatePhotoSchema = z.object({
     body: z.object({
         title: z.string().min(1, "Judul wajib diisi").max(100, "Title maksimal 100 karakter").optional(),
         description: z.string().max(500, "Deskripsi maksimal 500 karakter").optional(),
+        titleEn: z.string().max(100, "Title (EN) maksimal 100 karakter").optional(),
+        descriptionEn: z.string().max(500, "Deskripsi (EN) maksimal 500 karakter").optional(),
         photographer: z.string().optional(),
         location: z.string().max(200, "Lokasi maksimal 200 karakter").optional(),
         price: z.coerce
