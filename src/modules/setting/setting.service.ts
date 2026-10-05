@@ -18,6 +18,9 @@ export async function getSettingService(key: string) {
     if (key === "contributor_share_percentage") {
       return { key, value: "70" };
     }
+    if (key === "map_plate_photos") {
+      return { key, value: "[]" };
+    }
   }
   return setting;
 }

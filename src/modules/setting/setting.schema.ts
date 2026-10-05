@@ -6,6 +6,8 @@ export const ALLOWED_SETTING_KEYS = [
   "standar_plan_price",
   "photo_price_presets",
   "contributor_share_percentage",
+  // Daftar id foto (JSON array) yang dipilih admin sebagai foto penanda tiap lokasi di peta beranda.
+  "map_plate_photos",
 ] as const;
 
 // PATCH/PUT /settings/:key (upsert)
