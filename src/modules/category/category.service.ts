@@ -2,6 +2,7 @@ import { prisma } from "../../config/db.js";
 import { getPresignedUrl } from "../../config/minio.js";
 import { uploadBuffer } from "../../utils/uploadToMinio.js";
 import { AppError } from "../../middlewares/errorHandler.js";
+import { uploadFileBuffer, cleanUploadFile } from "../../middlewares/upload.js";
 import {
   GetCategoriesInput,
   CreateCategoryInput,
@@ -40,7 +41,7 @@ async function sanitizeImageUpload(file: Express.Multer.File): Promise<{
 
   let format: string | undefined;
   try {
-    const metadata = await sharp(file.buffer).metadata();
+    const metadata = await sharp(uploadFileBuffer(file)).metadata();
     format = metadata.format?.toLowerCase();
   } catch {
     throw new AppError(
@@ -58,7 +59,8 @@ async function sanitizeImageUpload(file: Express.Multer.File): Promise<{
   }
 
   try {
-    const buffer = await sharp(file.buffer).jpeg({ quality: 90 }).toBuffer();
+    const buffer = await sharp(uploadFileBuffer(file)).jpeg({ quality: 90 }).toBuffer();
+    cleanUploadFile(file);
     return { buffer, mimetype: "image/jpeg", ext: "jpg" };
   } catch {
     throw new AppError(

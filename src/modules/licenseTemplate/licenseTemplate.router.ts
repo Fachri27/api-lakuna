@@ -3,6 +3,7 @@ import multer from "multer";
 import { authMiddleware } from "../../middlewares/auth.js";
 import { roleMiddleware } from "../../middlewares/role.js";
 import { AppError } from "../../middlewares/errorHandler.js";
+import { uploadFileBuffer, cleanUploadFile } from "../../middlewares/upload.js";
 import { PDFDocument } from "pdf-lib";
 import { prisma } from "../../config/db.js";
 import {
@@ -84,12 +85,15 @@ async function uploadTemplateController(
   next: NextFunction,
 ) {
   try {
-    const files = ((req as Request & { files?: Express.Multer.File[] }).files ?? []).filter((f) => f.buffer?.length);
+    const files = ((req as Request & { files?: Express.Multer.File[] }).files ?? []).filter(
+      (f) => (f.buffer?.length ?? 0) > 0 || !!f.path,
+    );
     if (!files.length) {
       throw new AppError(400, "NO_FILE", "Unggah berkas PDF template dulu");
     }
     // Beberapa berkas (Hal 1, Hal 2, …) digabung sesuai urutan unggah.
-    const merged = await mergeTemplatePdfs(files.map((f) => f.buffer));
+    const merged = await mergeTemplatePdfs(files.map((f) => uploadFileBuffer(f)));
+    files.forEach(cleanUploadFile);
     const result = await saveLicenseTemplate(merged);
     const template = await getLicenseTemplate();
     return res.status(201).json({

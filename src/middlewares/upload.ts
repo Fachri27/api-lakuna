@@ -1,6 +1,7 @@
 import multer from "multer";
 import { tmpdir } from "os";
 import crypto from "crypto";
+import { readFileSync, unlinkSync } from "fs";
 import { AppError } from "./errorHandler.js";
 import { UPLOAD_MAX_MB } from "../config/upload.js";
 
@@ -61,7 +62,13 @@ function isDangerousMime(mime: string): boolean {
   return mime === "image/svg+xml" || mime === "text/html" || mime.includes("+xml");
 }
 export const upload = multer({
-  storage: multer.memoryStorage(),
+  // Ke DISK, bukan RAM: video ratusan MB–2 GB tak boleh ditampung di memori
+  // (kontainer Railway dibatasi memori; Node dimatikan OOM-killer dan unggahan
+  // putus — "Failed to fetch"/502 di CMS). Pola yang sama dengan homepageUpload.
+  storage: multer.diskStorage({
+    destination: tmpdir(),
+    filename: (_req, _file, cb) => cb(null, `lakuna-up-${crypto.randomUUID()}`),
+  }),
   limits: {
     fileSize: UPLOAD_MAX_MB * 1024 * 1024,
   },
@@ -87,6 +94,25 @@ export const upload = multer({
     }
   },
 });
+
+/**
+ * Baca isi berkas unggahan apa pun penyimpanannya (disk pasca-migrasi OOM
+ * maupun memory bila ada). Dipakai consumer kecil (kategori, avatar).
+ */
+export function uploadFileBuffer(file: Express.Multer.File): Buffer {
+  if (file.buffer && file.buffer.length > 0) return file.buffer;
+  if (file.path) return readFileSync(file.path);
+  throw new AppError(400, "INVALID_FILE", "Berkas unggahan tidak terbaca");
+}
+
+/** Hapus berkas sementara di disk (bila ada); best-effort, tak pernah throw. */
+export function cleanUploadFile(file: Express.Multer.File | undefined): void {
+  try {
+    if (file?.path) unlinkSync(file.path);
+  } catch {
+    /* abaikan */
+  }
+}
 
 /**
  * Khusus upload media homepage (field "image"): gambar + video (mp4/webm).

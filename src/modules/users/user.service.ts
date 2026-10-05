@@ -1,6 +1,7 @@
 import { prisma } from "../../config/db.js";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../middlewares/errorHandler.js";
+import { uploadFileBuffer, cleanUploadFile } from "../../middlewares/upload.js";
 import { redisClient } from "../../config/redis.js";
 import sharp from "sharp";
 import { minioClient, getPresignedUrl } from "../../config/minio.js";
@@ -202,12 +203,13 @@ export async function updateAvatarMeService(data: updateAvatars) {
   // resize image
   let avatarBuffer: Buffer;
   try {
-    avatarBuffer = await sharp(data.file.buffer)
+    avatarBuffer = await sharp(uploadFileBuffer(data.file))
       .resize(300, 300)
       .jpeg({
         quality: 80,
       })
       .toBuffer();
+    cleanUploadFile(data.file);
   } catch {
     throw new AppError(400, "INVALID_IMAGE", "File tidak dapat diproses sebagai gambar. Pastikan file adalah gambar yang valid.");
   }

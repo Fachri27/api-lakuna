@@ -9,7 +9,8 @@ import { execSync } from "child_process";
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { uploadBuffer } from "../../utils/uploadToMinio.js";
+import { uploadBuffer, uploadFile } from "../../utils/uploadToMinio.js";
+import { cleanUploadFile } from "../../middlewares/upload.js";
 import { getPresignedUrl } from "../../config/minio.js";
 import { INDONESIA_PLACES } from "../../utils/indonesiaPlaces.js";
 import { makeThumb, makePreviewImage, makePreviewVideo, makeClipVideo, clipKeyFor, grabVideoFrame } from "./publicAssets.js";
@@ -65,27 +66,31 @@ function parsePrice(price: number | string) {
 }
 
 async function buildPhotoAssets(
-  fileBuffer: Buffer,
-  mimeType?: string,
+  file: Express.Multer.File,
   watermarkFile?: Express.Multer.File,
   /** ID foto untuk pita kredit "lakunastock · ID" di aset publik. */
   photoId?: string,
 ) {
+   const mimeType = file.mimetype;
    const filename = crypto.randomUUID();
    const isVideo = mimeType?.startsWith("video/") ?? false;
+   // Disk-first: multer menyimpan ke disk (hindari OOM video besar di RAM).
+   // Buffer hanya dipakai bila penyimpanan memory (jalur lama).
+   const diskPath = !file.buffer?.length ? file.path : undefined;
+   const fileBuffer = file.buffer?.length ? file.buffer : undefined;
 
    if (isVideo) {
      const tempDir = mkdtempSync(join(tmpdir(), "lakuna-"));
      const ext = mimeType === "video/mp4" ? ".mp4" : mimeType === "video/webm" ? ".webm" : ".mov";
-     const videoPath = join(tempDir, `input${ext}`);
-     const h264Path = join(tempDir, "h264.mp4");
-
-     writeFileSync(videoPath, fileBuffer);
+     // Pakai berkas disk multer langsung (tanpa salin) bila ada.
+     const videoPath = diskPath ?? join(tempDir, `input${ext}`);
+     if (!diskPath) writeFileSync(videoPath, fileBuffer!);
 
      // Aset publik (lihat publicAssets.ts): thumbnail dari frame detik ke-1
      // dan pratinjau mp4 — keduanya kecil & ber-watermark. File asli hanya
      // untuk /api/downloads berlisensi.
      const framePath = join(tempDir, "frame.jpg");
+     const h264Path = join(tempDir, "h264.mp4");
      let thumbBuffer: Buffer;
      if (grabVideoFrame(videoPath, framePath)) {
        thumbBuffer = await makeThumb(readFileSync(framePath), photoId);
@@ -104,12 +109,12 @@ async function buildPhotoAssets(
     // asli sebagai cadangan (bocor) — pakai thumbnail sebagai poster saja.
     const h264Buffer = existsSync(h264Path) ? readFileSync(h264Path) : null;
 
-    // Upload original video
+    // Upload original video — STREAM dari disk bila bisa (hemat RAM).
     const originalKey = `original/${filename}${ext}`;
     const thumbKey = `thumb/${filename}.jpg`;
     const watermarkKey = `watermark/${filename}.mp4`; // Always MP4 for browser compatibility
-
-    await uploadBuffer(originalKey, fileBuffer, mimeType || "video/mp4");
+    if (diskPath) await uploadFile(originalKey, videoPath, mimeType || "video/mp4");
+    else await uploadBuffer(originalKey, fileBuffer!, mimeType || "video/mp4");
     await uploadBuffer(thumbKey, thumbBuffer, "image/jpeg");
     if (h264Buffer) await uploadBuffer(watermarkKey, h264Buffer, "video/mp4");
     const clipKey = clipKeyFor(watermarkKey);
@@ -124,20 +129,20 @@ async function buildPhotoAssets(
     return { width: null, height: null, format: "video", originalKey, thumbKey, watermarkKey };
   }
 
-  // Image processing
-  const metadata = await sharp(fileBuffer).metadata();
+  // Image processing (sharp menerima path maupun buffer).
+  const metadata = await sharp(diskPath ?? fileBuffer!).metadata();
   const width = metadata.width ?? null;
   const height = metadata.height ?? null;
   const format = metadata.format ?? null;
 
-  const originalBuffer = await sharp(fileBuffer)
+  const originalBuffer = await sharp(diskPath ?? fileBuffer!)
     .jpeg({ quality: 90 })
     .toBuffer();
 
   // Aset publik kecil & ber-watermark (lihat publicAssets.ts). Pratinjau
   // 1000 px untuk halaman detail/lightbox, thumbnail 480 px untuk grid.
-  const watermarkBuffer = await makePreviewImage(fileBuffer, photoId);
-  const thumbnailBuffer = await makeThumb(fileBuffer, photoId);
+  const watermarkBuffer = await makePreviewImage(diskPath ?? fileBuffer!, photoId);
+  const thumbnailBuffer = await makeThumb(diskPath ?? fileBuffer!, photoId);
 
   const originalKey = `original/${filename}.jpg`;
   const thumbKey = `thumb/${filename}.jpg`;
@@ -480,7 +485,9 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
   }
 
   if (file) {
-    const assets = await buildPhotoAssets(file.buffer, file.mimetype, watermark, existingPhoto.id);
+    const assets = await buildPhotoAssets(file, watermark, existingPhoto.id);
+    cleanUploadFile(file);
+    cleanUploadFile(watermark);
     updateData.originalKey = assets.originalKey;
     updateData.thumbKey = assets.thumbKey;
     updateData.watermarkKey = assets.watermarkKey;
@@ -641,11 +648,12 @@ export async function uploadPhotoService(data: PhotoInput) {
   // memuat ID yang sama dengan baris foto.
   const photoId = crypto.randomUUID();
   const assets = await buildPhotoAssets(
-    data.file.buffer,
-    data.file.mimetype,
+    data.file,
     data.watermark,
     photoId,
   );
+  cleanUploadFile(data.file);
+  cleanUploadFile(data.watermark);
 
   const status = data.role === "CONTRIBUTOR" ? "PENDING" : "APPROVED";
 

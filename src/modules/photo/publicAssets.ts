@@ -88,7 +88,7 @@ async function addCreditBar(img: Buffer, id: string | undefined, quality: number
 }
 
 /** Perkecil, tempel watermark tile, lalu pita kredit. Gagal watermark → tetap diperkecil. */
-async function shrinkAndWatermark(input: Buffer, width: number, quality: number, id?: string): Promise<Buffer> {
+async function shrinkAndWatermark(input: Buffer | string, width: number, quality: number, id?: string): Promise<Buffer> {
   const base = await sharp(input)
     .rotate() // hormati orientasi EXIF
     .resize({ width, withoutEnlargement: true })
@@ -108,7 +108,7 @@ async function shrinkAndWatermark(input: Buffer, width: number, quality: number,
 }
 
 /** Thumbnail kartu: diperkecil + pita kredit, tanpa watermark tile. */
-export async function makeThumb(image: Buffer, id?: string): Promise<Buffer> {
+export async function makeThumb(image: Buffer | string, id?: string): Promise<Buffer> {
   const base = await sharp(image)
     .rotate() // hormati orientasi EXIF
     .resize({ width: THUMB_W, withoutEnlargement: true })
@@ -117,7 +117,7 @@ export async function makeThumb(image: Buffer, id?: string): Promise<Buffer> {
   return addCreditBar(base, id, THUMB_Q);
 }
 
-export function makePreviewImage(image: Buffer, id?: string): Promise<Buffer> {
+export function makePreviewImage(image: Buffer | string, id?: string): Promise<Buffer> {
   return shrinkAndWatermark(image, PREVIEW_W, PREVIEW_Q, id);
 }
 
