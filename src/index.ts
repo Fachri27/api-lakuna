@@ -30,6 +30,7 @@ import routerVoucher from "./modules/voucher/voucher.router.js";
 import routerEvent from "./modules/event/event.router.js";
 import routerLicenseTemplate from "./modules/licenseTemplate/licenseTemplate.router.js";
 import routerHomepage from "./modules/homepage/homepage.router.js";
+import routerLogo from "./modules/logo/logo.router.js";
 import cron from "node-cron";
 import { runSettlement } from "./modules/earning/earning.service.js";
 
@@ -177,6 +178,9 @@ app.use("/api/settings", routerSetting);
 
 // homepage (konten hero/manifesto/anjungan/mulai — disimpan di tabel Setting)
 app.use("/api/homepage", routerHomepage);
+
+// logo pelanggan (dinding "Dipercaya tim di")
+app.use("/api/logos", routerLogo);
 
 // keyword
 app.use("/api/keywords", routerKeyword);
