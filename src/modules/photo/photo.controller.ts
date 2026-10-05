@@ -597,7 +597,18 @@ export async function getPhotoViewController(req: Request, res: Response, next: 
       select: { originalKey: true },
     });
     if (!photo?.originalKey) throw new AppError(404, "NOT_FOUND", "Foto tidak ditemukan");
-    const url = await getPresignedUrl(photo.originalKey, 600);
+    let url: string;
+    try {
+      url = await getPresignedUrl(photo.originalKey, 600);
+    } catch (e) {
+      // File asli tak ada di storage (storage dipindah/dibersihkan): itu 404, bukan galat server (500).
+      // Frontend menanganinya dengan memakai pratinjau; getPresignedUrl sudah mencatatnya sekali.
+      const code = (e as { code?: string })?.code;
+      if (code === "NotFound" || code === "NoSuchKey" || code === "NoSuchBucket") {
+        throw new AppError(404, "FILE_MISSING", "File asli tidak tersedia");
+      }
+      throw e;
+    }
     res.setHeader("Cache-Control", "private, max-age=300");
     return res.json({ success: true, data: { url } });
   } catch (err) {
