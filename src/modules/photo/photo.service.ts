@@ -504,14 +504,18 @@ export async function updatePhotoService(data: UpdatePhotoInput) {
     data: updateData,
   });
 
-  // 3. Invalidate cache
-  const cacheKey = `photo:${id}`;
-  await redisClient.del(cacheKey);
+  // 3. Invalidate cache — kegagalan cache tidak boleh menggagalkan mutasi.
+  try {
+    const cacheKey = `photo:${id}`;
+    await redisClient.del(cacheKey);
 
-  // Invalidate semua cache list photos
-  const listKeys = await redisClient.keys("v4:photos:*");
-  if (listKeys.length > 0) {
-    await redisClient.del(listKeys);
+    // Invalidate semua cache list photos
+    const listKeys = await redisClient.keys("v4:photos:*");
+    if (listKeys.length > 0) {
+      await redisClient.del(listKeys);
+    }
+  } catch (err) {
+    console.error("[photo] gagal invalidate cache (diabaikan):", err);
   }
   if (process.env.NODE_ENV !== "production") console.log("CACHE INVALIDATED for photo:", id);
 
