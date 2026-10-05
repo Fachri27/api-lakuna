@@ -8,7 +8,7 @@ export const GetPhotosSchema = z.object({
     // Urutan hasil. Default terbaru; price_asc dipakai beranda untuk
     // menampilkan harga termurah per tipe ("mulai dari") tanpa menarik
     // seluruh arsip ke klien.
-    sort: z.enum(["newest", "price_asc", "price_desc"]).optional(),
+    sort: z.enum(["newest", "oldest", "price_asc", "price_desc"]).optional(),
     page: z.string().optional().default("1"),
     limit: z.string().optional().default("12"),
   }),
