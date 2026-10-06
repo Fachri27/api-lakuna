@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from "express";
-import { deleteMeService, getMeService, updateAvatarMeService, updateUserService, getAllUsersService, updateUserRoleService } from "./user.service.js";
+import { changePasswordService, deleteMeService, getMeService, updateAvatarMeService, updateNewsletterService, updateUserService, getAllUsersService, updateUserRoleService } from "./user.service.js";
 import { AppError } from "../../middlewares/errorHandler.js";
 import { AuthenticatedUser } from "../../types/express.js";
 
@@ -58,6 +58,47 @@ export async function updaterUserController(
       username: req.body.username,
       realName: req.body.realName,
       newsletter: req.body.newsletter,
+    });
+
+    return res.json({
+      success: true,
+      data: user,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function changePasswordController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    await changePasswordService({
+      userId: (req.user as AuthenticatedUser).userId,
+      current: req.body.current,
+      newPassword: req.body.new,
+    });
+
+    return res.json({
+      success: true,
+      message: "Password berhasil diubah",
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateNewsletterController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const user = await updateNewsletterService({
+      userId: (req.user as AuthenticatedUser).userId,
+      active: req.body.active,
     });
 
     return res.json({

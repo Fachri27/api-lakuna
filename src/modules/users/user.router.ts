@@ -1,11 +1,13 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { authMiddleware } from "../../middlewares/auth.js";
 import { validate } from "../../middlewares/validate.js";
-import { updateUserSchema } from "./user.schema.js";
+import { changePasswordSchema, newsletterSchema, updateUserSchema } from "./user.schema.js";
 import {
+  changePasswordController,
   deleteMeController,
   getMeController,
   updateAvatarController,
+  updateNewsletterController,
   updaterUserController,
   getAllUsersController,
   updateUserRoleController,
@@ -113,6 +115,20 @@ routerUser.patch(
   authMiddleware,
   validate(updateUserSchema),
   updaterUserController,
+);
+
+routerUser.post(
+  "/me/password",
+  authMiddleware,
+  validate(changePasswordSchema),
+  changePasswordController,
+);
+
+routerUser.patch(
+  "/me/newsletter",
+  authMiddleware,
+  validate(newsletterSchema),
+  updateNewsletterController,
 );
 
 routerUser.get("/me", authMiddleware, getMeController);

@@ -1,6 +1,7 @@
 import { prisma } from "../../config/db.js";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../middlewares/errorHandler.js";
+import bcrypt from "bcryptjs";
 import { uploadFileBuffer, cleanUploadFile } from "../../middlewares/upload.js";
 import { redisClient } from "../../config/redis.js";
 import sharp from "sharp";
@@ -302,6 +303,89 @@ export async function deleteMeService(data: {
   await redisClient.del(`user:me:${data.userId}`);
 
   return softDelete;
+}
+
+// change password: verify current with bcrypt compare, hash new with bcrypt
+export async function changePasswordService(data: {
+  userId: string;
+  current: string;
+  newPassword: string;
+}) {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: data.userId,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(404, "USER_NOT_FOUND", "User tidak di temukan");
+  }
+
+  if (user.deletedAt) {
+    throw new AppError(404, "ACCOUNT_DELETED", "Akun sudah di hapus");
+  }
+
+  const isMatch = await bcrypt.compare(data.current, user.password);
+
+  if (!isMatch) {
+    throw new AppError(401, "INVALID_CURRENT_PASSWORD", "Password saat ini salah");
+  }
+
+  const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+
+  await prisma.user.update({
+    where: {
+      id: data.userId,
+      deletedAt: null,
+    },
+    data: {
+      password: hashedPassword,
+    },
+  });
+
+  await redisClient.del(`user:me:${data.userId}`);
+
+  return { id: data.userId };
+}
+
+// newsletter opt-in/out (dedicated endpoint, thin wrapper over User.newsletter)
+export async function updateNewsletterService(data: {
+  userId: string;
+  active: boolean;
+}) {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: data.userId,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(404, "USER_NOT_FOUND", "User tidak di temukan");
+  }
+
+  if (user.deletedAt) {
+    throw new AppError(404, "ACCOUNT_DELETED", "Akun sudah di hapus");
+  }
+
+  const saveUser = await prisma.user.update({
+    where: {
+      id: data.userId,
+      deletedAt: null,
+    },
+    data: {
+      newsletter: data.active,
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      newsletter: true,
+    },
+  });
+
+  await redisClient.del(`user:me:${data.userId}`);
+
+  return saveUser;
 }
 
 // Admin: Update user role
