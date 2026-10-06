@@ -10,12 +10,13 @@ export const CreateLogoSchema = z.object({
   }),
 });
 
-export const RenameLogoSchema = z.object({
+// PATCH: nama dan/atau berkas gambar (multipart, field `image`). Minimal salah satunya — dicek di controller.
+export const UpdateLogoSchema = z.object({
   params: z.object({
     id: z.string().min(1, "ID logo tidak valid"),
   }),
   body: z.object({
-    name: z.string().min(1, "Nama logo wajib diisi").max(80, "Nama maksimal 80 karakter"),
+    name: z.string().min(1, "Nama logo wajib diisi").max(80, "Nama maksimal 80 karakter").optional(),
   }),
 });
 

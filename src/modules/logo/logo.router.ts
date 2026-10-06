@@ -6,14 +6,14 @@ import { validate } from "../../middlewares/validate.js";
 import {
   ListLogosSchema,
   CreateLogoSchema,
-  RenameLogoSchema,
+  UpdateLogoSchema,
   DeleteLogoSchema,
   OrderLogosSchema,
 } from "./logo.schema.js";
 import {
   listLogosController,
   createLogoController,
-  renameLogoController,
+  updateLogoController,
   deleteLogoController,
   orderLogosController,
 } from "./logo.controller.js";
@@ -43,8 +43,9 @@ routerLogo.patch(
   "/:id",
   authMiddleware,
   roleMiddleware("ADMIN"),
-  validate(RenameLogoSchema),
-  renameLogoController,
+  upload.single("image"),
+  validate(UpdateLogoSchema),
+  updateLogoController,
 );
 routerLogo.delete(
   "/:id",

@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import {
   listLogosService,
   createLogoService,
-  renameLogoService,
+  updateLogoService,
   deleteLogoService,
   orderLogosService,
 } from "./logo.service.js";
@@ -28,9 +28,14 @@ export async function createLogoController(req: Request, res: Response, next: Ne
   }
 }
 
-export async function renameLogoController(req: Request, res: Response, next: NextFunction) {
+export async function updateLogoController(req: Request, res: Response, next: NextFunction) {
   try {
-    const data = await renameLogoService(req.params.id as string, String(req.body?.name ?? ""));
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    const name = typeof req.body?.name === "string" ? req.body.name : undefined;
+    if (!file && name === undefined) {
+      throw new AppError(400, "NOTHING_TO_UPDATE", "Isi nama baru atau pilih gambar pengganti");
+    }
+    const data = await updateLogoService(req.params.id as string, { name, file });
     if (!data) throw new AppError(404, "LOGO_NOT_FOUND", "Logo tidak ditemukan");
     return res.json({ success: true, data });
   } catch (err) {

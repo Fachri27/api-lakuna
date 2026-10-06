@@ -55,10 +55,8 @@ export async function listLogosService(): Promise<LogoPublic[]> {
 const ALLOWED_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_FORMATS = new Set(["jpeg", "jpg", "png", "webp"]);
 
-export async function createLogoService(
-  name: string,
-  file: Express.Multer.File,
-): Promise<LogoPublic> {
+/** Validasi + simpan berkas logo ke storage; mengembalikan key barunya. Dipakai unggah dan ganti gambar. */
+async function storeLogoImage(file: Express.Multer.File): Promise<string> {
   const mime = (file.mimetype || "").split(";")[0]?.trim().toLowerCase() ?? "";
   if (!ALLOWED_MIMES.has(mime)) {
     throw new AppError(400, "INVALID_FILE_TYPE", "Logo harus JPG, PNG, atau WebP");
@@ -77,7 +75,14 @@ export async function createLogoService(
   const imageKey = `logo/${crypto.randomUUID()}.${ext}`;
   await uploadBuffer(imageKey, buffer, `image/${ext === "jpg" ? "jpeg" : ext}`);
   cleanUploadFile(file);
+  return imageKey;
+}
 
+export async function createLogoService(
+  name: string,
+  file: Express.Multer.File,
+): Promise<LogoPublic> {
+  const imageKey = await storeLogoImage(file);
   const items = await readLogos();
   const item: LogoItem = { id: crypto.randomUUID(), name: name.trim(), imageKey };
   items.push(item);
@@ -91,12 +96,32 @@ export async function createLogoService(
   return { id: item.id, name: item.name, imageUrl };
 }
 
-export async function renameLogoService(id: string, name: string): Promise<LogoPublic | null> {
+/** Ubah nama dan/atau ganti gambar logo. Gambar lama dihapus dari storage setelah yang baru tersimpan. */
+export async function updateLogoService(
+  id: string,
+  patch: { name?: string | undefined; file?: Express.Multer.File | undefined },
+): Promise<LogoPublic | null> {
   const items = await readLogos();
   const item = items.find((l) => l.id === id);
-  if (!item) return null;
-  item.name = name.trim();
+  if (!item) {
+    if (patch.file) cleanUploadFile(patch.file);
+    return null;
+  }
+  let oldKey: string | null = null;
+  if (patch.file) {
+    const newKey = await storeLogoImage(patch.file); // gagal validasi = melempar, data lama tak tersentuh
+    oldKey = item.imageKey;
+    item.imageKey = newKey;
+  }
+  if (patch.name !== undefined) item.name = patch.name.trim();
   await writeLogos(items);
+  if (oldKey && oldKey !== item.imageKey) {
+    try {
+      if (BUCKET) await minioClient.removeObject(BUCKET, oldKey);
+    } catch {
+      /* best-effort */
+    }
+  }
   let imageUrl: string | null = null;
   try {
     imageUrl = await getPresignedUrl(item.imageKey);
