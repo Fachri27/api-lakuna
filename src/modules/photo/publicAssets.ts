@@ -26,9 +26,10 @@ import { buildTiledSkewedWatermarkOverlay } from "./watermarkLogo.js";
 export const THUMB_W = 800;
 export const THUMB_Q = 68;
 /** Thumbnail VIDEO jauh lebih besar: kartu video (contact sheet) memajangnya setinggi layar sebelum klip
- *  jalan; 800 px dibentangkan jadi buram. 1920 px ≈ 250 KB per video. */
-export const VIDEO_THUMB_W = Math.max(THUMB_W, Number(process.env.VIDEO_THUMB_W) || 1920);
-export const VIDEO_THUMB_Q = 76;
+ *  jalan; 800 px dibentangkan jadi buram. Kartu setinggi ±800 px CSS = 1600 px fisik di layar retina,
+ *  jadi bingkai 16:9 perlu ≥2880 px lebar. ≈ 250-700 KB per video. */
+export const VIDEO_THUMB_W = Math.max(THUMB_W, Number(process.env.VIDEO_THUMB_W) || 2880);
+export const VIDEO_THUMB_Q = 80;
 export const VIDEO_THUMB = { width: VIDEO_THUMB_W, quality: VIDEO_THUMB_Q } as const;
 export const PREVIEW_W = 1000;
 export const PREVIEW_Q = 72;
