@@ -31,6 +31,7 @@ import routerEvent from "./modules/event/event.router.js";
 import routerLicenseTemplate from "./modules/licenseTemplate/licenseTemplate.router.js";
 import routerHomepage from "./modules/homepage/homepage.router.js";
 import routerLogo from "./modules/logo/logo.router.js";
+import routerSupport from "./modules/support/support.router.js";
 import cron from "node-cron";
 import { runSettlement } from "./modules/earning/earning.service.js";
 
@@ -181,6 +182,9 @@ app.use("/api/homepage", routerHomepage);
 
 // logo pelanggan (dinding "Dipercaya tim di")
 app.use("/api/logos", routerLogo);
+
+// formulir Customer service + kotak masuk admin
+app.use("/api/support", routerSupport);
 
 // keyword
 app.use("/api/keywords", routerKeyword);

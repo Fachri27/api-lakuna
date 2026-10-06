@@ -61,6 +61,13 @@ export const downloadRateLimiter = createRateLimiter({
     message: "Terlalu banyak percobaan download, silakan coba lagi dalam 1 jam",
 });
 
+// Formulir Customer service — 5 pesan per jam per IP (cegah spam; dev diberi pelonggaran 50x).
+export const supportRateLimiter = createRateLimiter({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    message: "Terlalu banyak pesan dari jaringan ini, silakan coba lagi dalam 1 jam",
+});
+
 // General API — 500x per 5 menit
 export const generalLimiter = createRateLimiter({
   windowMs: 5 * 60 * 1000,

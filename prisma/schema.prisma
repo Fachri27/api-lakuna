@@ -388,6 +388,23 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/// Pesan dari formulir Customer service (publik). Admin membacanya di CMS.
+model SupportMessage {
+  id        String   @id @default(uuid())
+  name      String   @db.VarChar(100)
+  email     String   @db.VarChar(191)
+  /// pesanan | unduhan | langganan | lisensi | lainnya
+  topic     String   @db.VarChar(24)
+  orderId   String?  @db.VarChar(64)
+  message   String   @db.VarChar(2000)
+  /// NEW | READ | DONE
+  status    String   @default("NEW") @db.VarChar(8)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
 model SettlementRun {
   id               String   @id @default(uuid())
   period           String   @unique
