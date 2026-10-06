@@ -13,7 +13,7 @@ import { uploadBuffer, uploadFile } from "../../utils/uploadToMinio.js";
 import { cleanUploadFile } from "../../middlewares/upload.js";
 import { getPresignedUrl } from "../../config/minio.js";
 import { INDONESIA_PLACES } from "../../utils/indonesiaPlaces.js";
-import { makeThumb, makePreviewImage, makePreviewVideo, makeClipVideo, clipKeyFor, grabVideoFrame } from "./publicAssets.js";
+import { makeThumb, makePreviewImage, makePreviewVideo, makeClipVideo, clipKeyFor, grabVideoFrame, VIDEO_THUMB } from "./publicAssets.js";
 
 // Foto yang sudah dilaporkan gagal membuat link (hindari banjir log tiap request).
 const presignFailedLogged = new Set<string>();
@@ -93,7 +93,7 @@ async function buildPhotoAssets(
      const h264Path = join(tempDir, "h264.mp4");
      let thumbBuffer: Buffer;
      if (grabVideoFrame(videoPath, framePath)) {
-       thumbBuffer = await makeThumb(readFileSync(framePath), photoId);
+       thumbBuffer = await makeThumb(readFileSync(framePath), photoId, VIDEO_THUMB);
        try { unlinkSync(framePath); } catch {}
      } else {
        thumbBuffer = await sharp({

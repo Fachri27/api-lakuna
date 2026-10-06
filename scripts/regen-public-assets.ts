@@ -25,7 +25,7 @@ import { join } from "path";
 import { prisma } from "../src/config/db.js";
 import { minioClient } from "../src/config/minio.js";
 import { uploadBuffer } from "../src/utils/uploadToMinio.js";
-import { makeThumb, makePreviewImage, makePreviewVideo, grabVideoFrame, makeClipVideo, clipKeyFor } from "../src/modules/photo/publicAssets.js";
+import { makeThumb, makePreviewImage, makePreviewVideo, grabVideoFrame, makeClipVideo, clipKeyFor, VIDEO_THUMB } from "../src/modules/photo/publicAssets.js";
 
 const BUCKET = process.env.MINIO_BUCKET!;
 const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7);
@@ -135,7 +135,7 @@ async function main() {
 				} else {
 					src = await getBuffer(p.originalKey);
 				}
-				const thumb = await makeThumb(src, p.id);
+				const thumb = await makeThumb(src, p.id, p.type === "VIDEO" ? VIDEO_THUMB : undefined);
 				await uploadBuffer(p.thumbKey, thumb, "image/jpeg");
 				ok++;
 				console.log(`ok thumb ${p.type} ${p.title} (${(thumb.length / 1024).toFixed(0)} KB)`);
@@ -153,7 +153,7 @@ async function main() {
 				// curl di host (macOS); container alpine hanya punya wget busybox.
 				execSync(`if command -v curl >/dev/null; then curl -sS --fail --retry 3 -o "${vp}" "${url}"; else wget -q -O "${vp}" "${url}"; fi`, { stdio: "pipe" });
 				if (grabVideoFrame(vp, fp)) {
-					await uploadBuffer(p.thumbKey, await makeThumb(readFileSync(fp), p.id), "image/jpeg");
+					await uploadBuffer(p.thumbKey, await makeThumb(readFileSync(fp), p.id, VIDEO_THUMB), "image/jpeg");
 				}
 				if (p.watermarkKey && (await makePreviewVideo(vp, op)) && existsSync(op)) {
 					const buf = readFileSync(op);

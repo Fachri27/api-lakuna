@@ -25,6 +25,11 @@ import { buildTiledSkewedWatermarkOverlay } from "./watermarkLogo.js";
 
 export const THUMB_W = 800;
 export const THUMB_Q = 68;
+/** Thumbnail VIDEO jauh lebih besar: kartu video (contact sheet) memajangnya setinggi layar sebelum klip
+ *  jalan; 800 px dibentangkan jadi buram. 1920 px ≈ 250 KB per video. */
+export const VIDEO_THUMB_W = Math.max(THUMB_W, Number(process.env.VIDEO_THUMB_W) || 1920);
+export const VIDEO_THUMB_Q = 76;
+export const VIDEO_THUMB = { width: VIDEO_THUMB_W, quality: VIDEO_THUMB_Q } as const;
 export const PREVIEW_W = 1000;
 export const PREVIEW_Q = 72;
 export const VIDEO_W = 640;
@@ -108,13 +113,15 @@ async function shrinkAndWatermark(input: Buffer | string, width: number, quality
 }
 
 /** Thumbnail kartu: diperkecil + pita kredit, tanpa watermark tile. */
-export async function makeThumb(image: Buffer | string, id?: string): Promise<Buffer> {
+export async function makeThumb(image: Buffer | string, id?: string, opts?: { width?: number; quality?: number }): Promise<Buffer> {
+  const width = opts?.width ?? THUMB_W;
+  const quality = opts?.quality ?? THUMB_Q;
   const base = await sharp(image)
     .rotate() // hormati orientasi EXIF
-    .resize({ width: THUMB_W, withoutEnlargement: true })
-    .jpeg({ quality: THUMB_Q, mozjpeg: true })
+    .resize({ width, withoutEnlargement: true })
+    .jpeg({ quality, mozjpeg: true })
     .toBuffer();
-  return addCreditBar(base, id, THUMB_Q);
+  return addCreditBar(base, id, quality);
 }
 
 export function makePreviewImage(image: Buffer | string, id?: string): Promise<Buffer> {
