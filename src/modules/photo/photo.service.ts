@@ -32,6 +32,7 @@ type PhotoInput = {
   photographer: string;
   price: number | string;
   type: "FOTO" | "VIDEO";
+  isExclusive?: boolean;
 };
 
 // Update photo dengan cache invalidate
@@ -45,6 +46,7 @@ type UpdatePhotoInput = {
   photographer?: string;
   price?: number | string;
   type?: "FOTO" | "VIDEO";
+  isExclusive?: boolean;
   file?: Express.Multer.File;
   watermark?: Express.Multer.File;
 };
@@ -261,7 +263,8 @@ export async function getPhotoService(query: GetPhotosInput) {
       },
     };
   } else if (query.search) {
-    // Pencarian = JUDUL (ID & EN), NAMA FOTOGRAFER, atau KEYWORD (ID & EN).
+    // Pencarian = JUDUL (ID & EN), NAMA FOTOGRAFER, KATEGORI, atau KEYWORD (ID & EN).
+    // Tanpa `mode: insensitive` (khusus Postgres — MySQL produksi memakai collation).
     where.OR = [
       {
         title: {
@@ -276,6 +279,17 @@ export async function getPhotoService(query: GetPhotosInput) {
       {
         photographer: {
           contains: query.search,
+        },
+      },
+      {
+        photoCategories: {
+          some: {
+            category: {
+              name: {
+                contains: query.search,
+              },
+            },
+          },
         },
       },
       {
@@ -670,6 +684,7 @@ export async function uploadPhotoService(data: PhotoInput) {
     location: data.location ?? null,
     batchId: data.batchId ?? null,
     type: data.type,
+    isExclusive: data.isExclusive ?? false,
     status,
 
     price: parsedPrice,
